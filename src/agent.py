@@ -84,14 +84,19 @@ async def run(user_message: str, history: list[dict] | None = None) -> str:
     messages = list(history or [])
     messages.append({"role": "user", "content": user_message})
 
+    first_call = True
     while True:
+        # Ersten Call erzwingen Tools zu nutzen; danach auto (für finale Textantwort)
+        tool_choice = "required" if first_call else "auto"
+        first_call = False
+
         for attempt in range(3):
             try:
                 response = await litellm.acompletion(
                     model=model,
                     messages=[{"role": "system", "content": _system_prompt()}] + messages,
                     tools=TOOL_DEFINITIONS,
-                    tool_choice="auto",
+                    tool_choice=tool_choice,
                     max_tokens=4096,
                 )
                 break
