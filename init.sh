@@ -49,16 +49,31 @@ if [[ ! -f .env ]] || [[ "$overwrite" =~ ^[jJyY]$ ]]; then
     echo -e "  ${YELLOW}Telegram Bot Token${NC}  – von @BotFather"
     read_secret "TELEGRAM_BOT_TOKEN" "TELEGRAM_BOT_TOKEN"
 
-    echo -e "  ${YELLOW}Anthropic API Key${NC}   – console.anthropic.com"
-    read_secret "ANTHROPIC_API_KEY" "ANTHROPIC_API_KEY"
+    echo -e "\n  ${YELLOW}KI-Provider wählen:${NC}"
+    echo "    1) claude     – Anthropic Claude  (kostenpflichtig)"
+    echo "    2) gemini     – Google Gemini 2.0 Flash  ✅ KOSTENLOS"
+    echo "    3) groq       – Groq / Llama 3.3 70B     ✅ KOSTENLOS"
+    echo "    4) mistral    – Mistral Small             ✅ KOSTENLOS"
+    echo "    5) openrouter – OpenRouter (teils kostenlos)"
+    read -rp "  Auswahl [1-5, Standard: 1]: " provider_choice
+    case "$provider_choice" in
+        2) provider="gemini";      key_var="GEMINI_API_KEY";      key_url="aistudio.google.com/apikey" ;;
+        3) provider="groq";        key_var="GROQ_API_KEY";        key_url="console.groq.com/keys" ;;
+        4) provider="mistral";     key_var="MISTRAL_API_KEY";     key_url="console.mistral.ai/api-keys" ;;
+        5) provider="openrouter";  key_var="OPENROUTER_API_KEY";  key_url="openrouter.ai/keys" ;;
+        *) provider="claude";      key_var="ANTHROPIC_API_KEY";   key_url="console.anthropic.com" ;;
+    esac
+    sed -i.bak "s|^LLM_PROVIDER=.*|LLM_PROVIDER=${provider}|" .env && rm -f .env.bak
+    echo -e "\n  ${YELLOW}${key_var}${NC}  – ${key_url}"
+    read_secret "$key_var" "$key_var"
 
-    echo -e "  ${YELLOW}HKA Login${NC}           – dein Hochschul-Account (z.B. muster)"
+    echo -e "\n  ${YELLOW}HKA Login${NC}           – dein Hochschul-Account (z.B. muster)"
     read_secret "RAUMZEIT_LOGIN" "RAUMZEIT_LOGIN"
 
     echo -e "  ${YELLOW}HKA Passwort${NC}"
     read_secret "RAUMZEIT_PASSWORD" "RAUMZEIT_PASSWORD"
 
-    ok ".env gespeichert."
+    ok ".env gespeichert (Provider: ${provider})."
 fi
 
 # ─── 3. Abhängigkeiten ─────────────────────────────────────────────────────────
