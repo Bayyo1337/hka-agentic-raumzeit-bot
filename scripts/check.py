@@ -1,5 +1,5 @@
 """
-Verbindungstest für alle drei Dienste.
+Verbindungstest für alle konfigurierten Dienste.
 Wird von init.sh via `uv run python scripts/check.py` aufgerufen.
 """
 
@@ -8,21 +8,20 @@ import os
 import sys
 from pathlib import Path
 
-# .env laden bevor src-imports
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 import httpx
 
-GREEN = "\033[0;32m"; RED = "\033[0;31m"; NC = "\033[0m"
-
+GREEN = "\033[0;32m"; RED = "\033[0;31m"; YELLOW = "\033[1;33m"; NC = "\033[0m"
 ok   = lambda msg: print(f"  {GREEN}✓{NC}  {msg}")
 fail = lambda msg: print(f"  {RED}✗{NC}  {msg}")
+info = lambda msg: print(f"  {YELLOW}i{NC}  {msg}")
 
 
 async def check_raumzeit() -> bool:
-    base = os.getenv("RAUMZEIT_BASE_URL", "https://raumzeit.hka-iwi.de")
-    login = os.getenv("RAUMZEIT_LOGIN", "")
+    base     = os.getenv("RAUMZEIT_BASE_URL", "https://raumzeit.hka-iwi.de")
+    login    = os.getenv("RAUMZEIT_LOGIN", "")
     password = os.getenv("RAUMZEIT_PASSWORD", "")
     try:
         async with httpx.AsyncClient(base_url=base, timeout=10) as c:
@@ -49,8 +48,7 @@ async def check_telegram() -> bool:
             r = await c.get(f"https://api.telegram.org/bot{token}/getMe")
             data = r.json()
             if data.get("ok"):
-                name = data["result"].get("username", "?")
-                ok(f"Telegram      –  @{name}")
+                ok(f"Telegram      –  @{data['result'].get('username', '?')}")
                 return True
             fail(f"Telegram      –  {data.get('description', 'Ungültiger Token')}")
             return False
@@ -59,24 +57,54 @@ async def check_telegram() -> bool:
         return False
 
 
-async def check_anthropic() -> bool:
-    import anthropic
-    key = os.getenv("ANTHROPIC_API_KEY", "")
+async def check_llm() -> bool:
+    provider = os.getenv("LLM_PROVIDER", "claude").lower()
+
+    key_map = {
+        "claude":      ("ANTHROPIC_API_KEY",  "console.anthropic.com"),
+        "gemini":      ("GEMINI_API_KEY",      "aistudio.google.com/apikey"),
+        "groq":        ("GROQ_API_KEY",        "console.groq.com/keys"),
+        "mistral":     ("MISTRAL_API_KEY",     "console.mistral.ai/api-keys"),
+        "openrouter":  ("OPENROUTER_API_KEY",  "openrouter.ai/keys"),
+    }
+
+    if provider not in key_map:
+        fail(f"LLM           –  Unbekannter Provider: '{provider}'")
+        return False
+
+    env_var, url = key_map[provider]
+    api_key = os.getenv(env_var, "").strip()
+
+    if not api_key:
+        fail(f"LLM ({provider:10s}) –  {env_var} fehlt in .env  →  {url}")
+        return False
+
+    # Kurzer Ping mit litellm
     try:
-        client = anthropic.AsyncAnthropic(api_key=key)
-        msg = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=10,
+        import litellm
+        litellm.drop_params = True
+        model_map = {
+            "claude":     "claude-haiku-4-5-20251001",
+            "gemini":     "gemini/gemini-2.0-flash",
+            "groq":       "groq/llama-3.3-70b-versatile",
+            "mistral":    "mistral/mistral-small-latest",
+            "openrouter": "openrouter/google/gemini-2.0-flash-exp:free",
+        }
+        os.environ[env_var] = api_key
+        model = os.getenv("LLM_MODEL") or model_map[provider]
+        resp = await litellm.acompletion(
+            model=model,
             messages=[{"role": "user", "content": "ping"}],
+            max_tokens=5,
         )
-        if msg.content:
-            ok("Anthropic API –  Verbindung ok")
+        if resp.choices:
+            ok(f"LLM ({provider:10s}) –  {model}  ✓")
             return True
-        fail("Anthropic API –  leere Antwort")
-        return False
     except Exception as e:
-        fail(f"Anthropic API –  {e}")
+        fail(f"LLM ({provider:10s}) –  {e}")
         return False
+
+    return False
 
 
 async def main():
@@ -84,7 +112,7 @@ async def main():
     results = await asyncio.gather(
         check_raumzeit(),
         check_telegram(),
-        check_anthropic(),
+        check_llm(),
     )
     print()
     if not all(results):
