@@ -100,6 +100,10 @@ async def check_llm() -> bool:
         if resp.choices:
             ok(f"LLM ({provider:10s}) –  {model}  ✓")
             return True
+    except litellm.RateLimitError:
+        # 429 = Key gültig, aber Rate Limit erreicht → kein Blocker
+        ok(f"LLM ({provider:10s}) –  Key gültig (Rate Limit, kurz warten)")
+        return True
     except Exception as e:
         fail(f"LLM ({provider:10s}) –  {e}")
         return False
