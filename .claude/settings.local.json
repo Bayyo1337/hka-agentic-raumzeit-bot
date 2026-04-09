@@ -7,7 +7,19 @@
       "Bash(git commit -m ':*)",
       "Bash(gh repo:*)",
       "Bash(chmod +x /Users/noah/Desktop/raumzeit-ki-agent/init.sh)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(sudo chown:*)",
+      "Bash(git commit -m 'fix: hatchling package path for src/ layout:*)",
+      "Bash(git commit -m 'fix: update OpenRouter default model to llama-3.3-70b-instruct:free:*)",
+      "Bash(git commit -m 'fix: error handling + retry on rate limit:*)",
+      "Bash(git commit -m 'fix: inject today'\\\\''s date + stronger tool-use instructions in system prompt:*)",
+      "Bash(git commit -m 'fix: truncate tool responses to 6000 chars to prevent token exhaustion:*)",
+      "Bash(git commit -m 'feat: room name resolver with cache and fuzzy matching:*)",
+      "Bash(git commit -m 'fix: force tool_choice=required on first LLM call:*)",
+      "Bash(git commit -m 'perf: compress timetable API responses before sending to LLM:*)",
+      "Bash(git commit -m 'fix: remove client-side date filter, API handles it via ?date=:*)",
+      "Bash(git commit -m 'fix: proper history management - no tool results in context:*)",
+      "Bash(git commit -m 'feat: whitelist + per-user rate limiting:*)"
     ]
   }
 }

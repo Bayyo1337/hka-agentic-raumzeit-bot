@@ -1,6 +1,7 @@
-.PHONY: run check reset lint
+.PHONY: run check reset lint clean
 
 run:
+	uv sync --quiet
 	uv run python -m src.bot
 
 check:
@@ -11,3 +12,7 @@ reset:
 
 lint:
 	uv run ruff check src/ scripts/
+
+clean:
+	find . -type d -name __pycache__ -exec rm -rf {} +
+	find . -name "*.pyc" -delete

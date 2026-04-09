@@ -32,13 +32,21 @@ _DEFAULTS: dict[str, str] = {
     "openrouter":  "openrouter/meta-llama/llama-3.3-70b-instruct:free",
 }
 
-_SYSTEM_PROMPT_BASE = """Du bist ein hilfreicher Assistent für das Raumzeit-Buchungssystem der HKA (Hochschule Karlsruhe).
-Du hilfst dabei, Räume zu finden, Belegungen zu prüfen und Stundenpläne abzurufen.
+_SYSTEM_PROMPT_BASE = """Du bist ein Assistent für das Raumzeit-Buchungssystem der HKA (Hochschule Karlsruhe).
 
-WICHTIG – Tool-Nutzung:
-- Rufe IMMER die passenden Tools auf, bevor du antwortest. Rate niemals.
-- Wenn nach "heute" gefragt wird, nutze das heutige Datum als date-Parameter (YYYY-MM-DD).
-- Antworte auf Deutsch, präzise und freundlich."""
+REGEL: Du MUSST bei JEDER Anfrage zuerst ein Tool aufrufen. Antworte NIE ohne vorherigen Tool-Aufruf.
+- Raumfragen → get_room_timetable (bei Unklarheit erst get_all_rooms)
+- Kurs-Stundenplan → IMMER zuerst get_courses_of_study aufrufen um den exakten Bezeichner zu finden, dann get_course_timetable
+- Dozenten-Stundenplan → get_lecturer_timetable (Account-Kürzel, z.B. "muel")
+- "heute" = heutiges Datum, "morgen" = heutiges Datum + 1 Tag (YYYY-MM-DD)
+
+ANTWORT-FORMAT (Telegram Markdown):
+- Telegram Markdown: *fett* mit einfachen Sternchen (NICHT **doppelt**)
+- Nutze Emojis sparsam aber gezielt: 📅 für Datum, 🏫 für Raum, ✅ für frei, 🔴 für belegt
+- Belegungen als kompakte Liste: `09:50–11:20 Werkstoffkunde`
+- Freie Slots klar hervorheben, sinnvolle Uhrzeiten nennen (nicht "ab 00:00")
+- Kein Smalltalk am Ende, keine Rückfragen
+- Antworte auf Deutsch, präzise und knapp"""
 
 
 def _system_prompt() -> str:
@@ -72,27 +80,25 @@ _set_api_key()
 MAX_HISTORY_EXCHANGES = 3  # nur die letzten N Frage+Antwort-Paare behalten
 
 
-async def run(user_message: str, history: list[dict]) -> str:
+async def run(user_message: str, history: list[dict]) -> tuple[str, int, int]:
     """
     Tool-Use Loop: Nutzernachricht → Tool-Calls → finale Antwort.
     Aktualisiert history in-place mit nur User+Assistent-Text (keine Tool-Ergebnisse).
 
-    Args:
-        user_message: Aktuelle Nachricht des Nutzers.
-        history:      Gesprächsverlauf (wird in-place aktualisiert).
-
     Returns:
-        Finale Textantwort des Assistenten.
+        (reply, input_tokens, output_tokens)
     """
     model = _resolve_model()
-    # Arbeits-Kopie: enthält Tool-Calls/Ergebnisse, kommt nicht in history
     messages = list(history) + [{"role": "user", "content": user_message}]
 
-    first_call = True
+    any_tool_called = False
+    no_tool_retries = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
     while True:
-        # Ersten Call erzwingen Tools zu nutzen; danach auto (für finale Textantwort)
-        tool_choice = "required" if first_call else "auto"
-        first_call = False
+        # Tools erzwingen, bis mindestens ein Tool-Call stattgefunden hat.
+        # Danach "auto", damit das Modell die finale Textantwort geben kann.
+        tool_choice = "auto" if any_tool_called else "required"
 
         for attempt in range(3):
             try:
@@ -111,20 +117,44 @@ async def run(user_message: str, history: list[dict]) -> str:
                 log.warning("Rate limit – warte %ds (Versuch %d/3)", wait, attempt + 1)
                 await asyncio.sleep(wait)
 
+        usage = getattr(response, "usage", None)
+        if usage:
+            total_input_tokens += getattr(usage, "prompt_tokens", 0) or 0
+            total_output_tokens += getattr(usage, "completion_tokens", 0) or 0
+
         choice = response.choices[0]
         msg = choice.message
         messages.append(msg.model_dump(exclude_none=True))
 
         if not msg.tool_calls:
-            reply = msg.content or ""
-            # History in-place aktualisieren: nur User + finale Textantwort
+            if not any_tool_called and no_tool_retries < 2:
+                # Modell hat tool_choice="required" ignoriert — explizit nachfordern
+                no_tool_retries += 1
+                log.warning("Modell hat Tools nicht aufgerufen (Versuch %d/2) – fordere erneut", no_tool_retries)
+                messages.append({
+                    "role": "user",
+                    "content": "Bitte nutze die verfügbaren Tools, um die Anfrage zu beantworten. Antworte nicht ohne Tool-Aufruf.",
+                })
+                continue
+
+            if not msg.content and any_tool_called and no_tool_retries < 2:
+                # Modell hat Tool-Ergebnisse bekommen aber nichts geantwortet — nachfordern
+                no_tool_retries += 1
+                log.warning("Modell hat nach Tool-Calls leere Antwort gegeben – fordere Interpretation")
+                messages.append({
+                    "role": "user",
+                    "content": "Bitte beantworte jetzt die ursprüngliche Frage auf Basis der Tool-Ergebnisse.",
+                })
+                continue
+
+            reply = msg.content or "Ich konnte keine Antwort generieren. Bitte versuche es nochmal."
             history.append({"role": "user", "content": user_message})
             history.append({"role": "assistant", "content": reply})
-            # Auf MAX_HISTORY_EXCHANGES kürzen (je 2 Einträge pro Exchange)
             max_entries = MAX_HISTORY_EXCHANGES * 2
             if len(history) > max_entries:
                 del history[:-max_entries]
-            return reply
+            log.info("Tokens: input=%d output=%d gesamt=%d", total_input_tokens, total_output_tokens, total_input_tokens + total_output_tokens)
+            return reply, total_input_tokens, total_output_tokens
 
         # Tool-Calls ausführen
         tool_results = []
@@ -150,4 +180,5 @@ async def run(user_message: str, history: list[dict]) -> str:
                 "content": content,
             })
 
+        any_tool_called = True
         messages.extend(tool_results)
