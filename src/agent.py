@@ -11,6 +11,7 @@ Unterstützte Provider (per LLM_PROVIDER in .env):
 Modell kann mit LLM_MODEL überschrieben werden.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -75,13 +76,22 @@ async def run(user_message: str, history: list[dict] | None = None) -> str:
     messages.append({"role": "user", "content": user_message})
 
     while True:
-        response = await litellm.acompletion(
-            model=model,
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-            tools=TOOL_DEFINITIONS,
-            tool_choice="auto",
-            max_tokens=4096,
-        )
+        for attempt in range(3):
+            try:
+                response = await litellm.acompletion(
+                    model=model,
+                    messages=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+                    tools=TOOL_DEFINITIONS,
+                    tool_choice="auto",
+                    max_tokens=4096,
+                )
+                break
+            except litellm.RateLimitError:
+                if attempt == 2:
+                    raise
+                wait = 10 * (attempt + 1)
+                log.warning("Rate limit – warte %ds (Versuch %d/3)", wait, attempt + 1)
+                await asyncio.sleep(wait)
 
         choice = response.choices[0]
         msg = choice.message

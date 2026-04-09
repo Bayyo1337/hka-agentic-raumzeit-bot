@@ -38,9 +38,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
     history = _histories.setdefault(chat_id, [])
-    reply = await agent.run(text, history)
+    try:
+        reply = await agent.run(text, history)
+    except Exception as exc:
+        log.exception("Agent-Fehler")
+        await update.message.reply_text(
+            "⚠️ Fehler bei der KI-Anfrage. Bitte kurz warten und nochmal versuchen.\n"
+            f"Details: {exc}"
+        )
+        return
 
-    # History wird in agent.run bereits befüllt; wir halten nur die Referenz
     await update.message.reply_text(reply)
 
 
