@@ -38,7 +38,6 @@ Du hilfst dabei, Räume zu finden, Belegungen zu prüfen und Stundenpläne abzur
 WICHTIG – Tool-Nutzung:
 - Rufe IMMER die passenden Tools auf, bevor du antwortest. Rate niemals.
 - Wenn nach "heute" gefragt wird, nutze das heutige Datum als date-Parameter (YYYY-MM-DD).
-- Wenn ein Raum nicht gefunden wird, versuche zuerst get_all_rooms() um die korrekten Namen zu sehen.
 - Antworte auf Deutsch, präzise und freundlich."""
 
 
@@ -122,10 +121,16 @@ async def run(user_message: str, history: list[dict] | None = None) -> str:
                 log.exception("Tool '%s' fehlgeschlagen", name)
                 result = {"error": str(exc)}
 
+            content = json.dumps(result, ensure_ascii=False)
+            if len(content) > 6000:
+                # Kürzen um Token-Limit nicht zu sprengen
+                content = content[:6000] + "\n... (gekürzt)"
+                log.warning("Tool '%s' Antwort auf 6000 Zeichen gekürzt", name)
+
             tool_results.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
-                "content": json.dumps(result, ensure_ascii=False),
+                "content": content,
             })
 
         messages.extend(tool_results)
