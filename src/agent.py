@@ -69,20 +69,24 @@ def _set_api_key() -> None:
 _set_api_key()
 
 
-async def run(user_message: str, history: list[dict] | None = None) -> str:
+MAX_HISTORY_EXCHANGES = 3  # nur die letzten N Frage+Antwort-Paare behalten
+
+
+async def run(user_message: str, history: list[dict]) -> str:
     """
-    Tool-Use Loop: Nutzernachricht → ggf. mehrere Tool-Calls → finale Antwort.
+    Tool-Use Loop: Nutzernachricht → Tool-Calls → finale Antwort.
+    Aktualisiert history in-place mit nur User+Assistent-Text (keine Tool-Ergebnisse).
 
     Args:
         user_message: Aktuelle Nachricht des Nutzers.
-        history:      Bisheriger Gesprächsverlauf (OpenAI-Message-Format).
+        history:      Gesprächsverlauf (wird in-place aktualisiert).
 
     Returns:
         Finale Textantwort des Assistenten.
     """
     model = _resolve_model()
-    messages = list(history or [])
-    messages.append({"role": "user", "content": user_message})
+    # Arbeits-Kopie: enthält Tool-Calls/Ergebnisse, kommt nicht in history
+    messages = list(history) + [{"role": "user", "content": user_message}]
 
     first_call = True
     while True:
@@ -112,7 +116,15 @@ async def run(user_message: str, history: list[dict] | None = None) -> str:
         messages.append(msg.model_dump(exclude_none=True))
 
         if not msg.tool_calls:
-            return msg.content or ""
+            reply = msg.content or ""
+            # History in-place aktualisieren: nur User + finale Textantwort
+            history.append({"role": "user", "content": user_message})
+            history.append({"role": "assistant", "content": reply})
+            # Auf MAX_HISTORY_EXCHANGES kürzen (je 2 Einträge pro Exchange)
+            max_entries = MAX_HISTORY_EXCHANGES * 2
+            if len(history) > max_entries:
+                del history[:-max_entries]
+            return reply
 
         # Tool-Calls ausführen
         tool_results = []
