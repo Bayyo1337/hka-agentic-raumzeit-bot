@@ -60,7 +60,7 @@ if [[ ! -f .env ]] || [[ "$overwrite" =~ ^[jJyY]$ ]]; then
         2) provider="gemini";      key_var="GEMINI_API_KEY";      key_url="aistudio.google.com/apikey" ;;
         3) provider="groq";        key_var="GROQ_API_KEY";        key_url="console.groq.com/keys" ;;
         4) provider="mistral";     key_var="MISTRAL_API_KEY";     key_url="console.mistral.ai/api-keys" ;;
-        5) provider="openrouter";  key_var="OPENROUTER_API_KEY";  key_url="openrouter.ai/keys" ;;
+        5) provider="openrouter";  key_var="OPENROUTER_API_KEY";  key_url="openrouter.ai/keys  (Default: Llama 3.3 70B free)" ;;
         *) provider="claude";      key_var="ANTHROPIC_API_KEY";   key_url="console.anthropic.com" ;;
     esac
     sed -i.bak "s|^LLM_PROVIDER=.*|LLM_PROVIDER=${provider}|" .env && rm -f .env.bak

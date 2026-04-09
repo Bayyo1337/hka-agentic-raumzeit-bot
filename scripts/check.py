@@ -88,7 +88,7 @@ async def check_llm() -> bool:
             "gemini":     "gemini/gemini-2.0-flash",
             "groq":       "groq/llama-3.3-70b-versatile",
             "mistral":    "mistral/mistral-small-latest",
-            "openrouter": "openrouter/google/gemini-2.0-flash-exp:free",
+            "openrouter": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
         }
         os.environ[env_var] = api_key
         model = os.getenv("LLM_MODEL") or model_map[provider]

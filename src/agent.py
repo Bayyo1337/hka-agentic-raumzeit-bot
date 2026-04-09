@@ -27,7 +27,7 @@ _DEFAULTS: dict[str, str] = {
     "gemini":      "gemini/gemini-2.0-flash",
     "groq":        "groq/llama-3.3-70b-versatile",
     "mistral":     "mistral/mistral-small-latest",
-    "openrouter":  "openrouter/google/gemini-2.0-flash-exp:free",
+    "openrouter":  "openrouter/meta-llama/llama-3.3-70b-instruct:free",
 }
 
 SYSTEM_PROMPT = """Du bist ein hilfreicher Assistent für das Raumzeit-Buchungssystem der HKA.
