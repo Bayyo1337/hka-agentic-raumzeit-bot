@@ -99,30 +99,63 @@ async def get_all_rooms() -> list:
     return await _get_rooms_cached()
 
 
-async def get_room_timetable(room_name: str, date: str | None = None) -> list:
+async def get_room_timetable(room_name: str, date: str | None = None) -> dict:
     canonical = await resolve_room_name(room_name)
     token = await _get_token()
     params = {"date": date} if date else {}
     async with _client(token) as c:
         r = await c.get(f"/api/v1/timetables/room/{canonical}", params=params)
         r.raise_for_status()
-        return r.json()
+        entries = r.json()
+
+    # Nur relevante Felder extrahieren — spart >90% der Tokens
+    bookings = []
+    for e in (entries if isinstance(entries, list) else []):
+        if not isinstance(e, dict):
+            continue
+        start = e.get("startTime") or e.get("start", "")
+        end   = e.get("endTime")   or e.get("end", "")
+        name  = e.get("name") or e.get("longName", "")
+        # Wenn ein Datum gefiltert wird, nur Einträge dieses Tages
+        if date and start and not start.startswith(date):
+            continue
+        bookings.append({"name": name, "start": start, "end": end})
+
+    return {
+        "room": canonical,
+        "queried_date": date or "aktuelle Woche",
+        "bookings": bookings,
+    }
 
 
-async def get_course_timetable(course_semester: str) -> list:
+async def get_course_timetable(course_semester: str) -> dict:
     token = await _get_token()
     async with _client(token) as c:
         r = await c.get(f"/api/v1/timetables/coursesemester/{course_semester}")
         r.raise_for_status()
-        return r.json()
+        entries = r.json()
+
+    bookings = [
+        {"name": e.get("name", ""), "start": e.get("startTime", ""), "end": e.get("endTime", "")}
+        for e in (entries if isinstance(entries, list) else [])
+        if isinstance(e, dict)
+    ]
+    return {"course_semester": course_semester, "bookings": bookings}
 
 
-async def get_lecturer_timetable(account: str) -> list:
+async def get_lecturer_timetable(account: str) -> dict:
     token = await _get_token()
     async with _client(token) as c:
         r = await c.get(f"/api/v1/timetables/lecturer/{account}")
         r.raise_for_status()
-        return r.json()
+        entries = r.json()
+
+    bookings = [
+        {"name": e.get("name", ""), "start": e.get("startTime", ""), "end": e.get("endTime", "")}
+        for e in (entries if isinstance(entries, list) else [])
+        if isinstance(e, dict)
+    ]
+    return {"lecturer": account, "bookings": bookings}
 
 
 async def get_departments() -> list:
