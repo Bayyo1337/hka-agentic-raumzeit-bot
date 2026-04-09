@@ -109,6 +109,7 @@ async def get_room_timetable(room_name: str, date: str | None = None) -> dict:
         entries = r.json()
 
     # Nur relevante Felder extrahieren — spart >90% der Tokens
+    # Datumsfilterung macht die API selbst via ?date=YYYY-MM-DD
     bookings = []
     for e in (entries if isinstance(entries, list) else []):
         if not isinstance(e, dict):
@@ -116,9 +117,6 @@ async def get_room_timetable(room_name: str, date: str | None = None) -> dict:
         start = e.get("startTime") or e.get("start", "")
         end   = e.get("endTime")   or e.get("end", "")
         name  = e.get("name") or e.get("longName", "")
-        # Wenn ein Datum gefiltert wird, nur Einträge dieses Tages
-        if date and start and not start.startswith(date):
-            continue
         bookings.append({"name": name, "start": start, "end": end})
 
     return {
