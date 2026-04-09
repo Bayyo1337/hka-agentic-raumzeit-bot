@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import os
+from datetime import date
 import litellm
 from src.config import settings
 from src.tools import TOOL_DEFINITIONS, TOOL_HANDLERS
@@ -31,9 +32,18 @@ _DEFAULTS: dict[str, str] = {
     "openrouter":  "openrouter/meta-llama/llama-3.3-70b-instruct:free",
 }
 
-SYSTEM_PROMPT = """Du bist ein hilfreicher Assistent für das Raumzeit-Buchungssystem der HKA.
-Du hilfst Nutzerinnen und Nutzern dabei, Räume zu finden, Verfügbarkeiten zu prüfen
-und Stundenpläne abzurufen. Antworte immer auf Deutsch, präzise und freundlich."""
+_SYSTEM_PROMPT_BASE = """Du bist ein hilfreicher Assistent für das Raumzeit-Buchungssystem der HKA (Hochschule Karlsruhe).
+Du hilfst dabei, Räume zu finden, Belegungen zu prüfen und Stundenpläne abzurufen.
+
+WICHTIG – Tool-Nutzung:
+- Rufe IMMER die passenden Tools auf, bevor du antwortest. Rate niemals.
+- Wenn nach "heute" gefragt wird, nutze das heutige Datum als date-Parameter (YYYY-MM-DD).
+- Wenn ein Raum nicht gefunden wird, versuche zuerst get_all_rooms() um die korrekten Namen zu sehen.
+- Antworte auf Deutsch, präzise und freundlich."""
+
+
+def _system_prompt() -> str:
+    return f"{_SYSTEM_PROMPT_BASE}\n\nHeutiges Datum: {date.today().isoformat()}"
 
 
 def _resolve_model() -> str:
@@ -80,7 +90,7 @@ async def run(user_message: str, history: list[dict] | None = None) -> str:
             try:
                 response = await litellm.acompletion(
                     model=model,
-                    messages=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+                    messages=[{"role": "system", "content": _system_prompt()}] + messages,
                     tools=TOOL_DEFINITIONS,
                     tool_choice="auto",
                     max_tokens=4096,
@@ -97,7 +107,7 @@ async def run(user_message: str, history: list[dict] | None = None) -> str:
         msg = choice.message
         messages.append(msg.model_dump(exclude_none=True))
 
-        if choice.finish_reason == "stop" or not msg.tool_calls:
+        if not msg.tool_calls:
             return msg.content or ""
 
         # Tool-Calls ausführen
