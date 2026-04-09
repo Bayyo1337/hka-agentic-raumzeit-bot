@@ -4,6 +4,7 @@ Base URL: https://raumzeit.hka-iwi.de
 Auth: Bearer JWT via POST /private/api/v1/authentication
 """
 
+import re
 import httpx
 from src.config import settings
 
@@ -36,22 +37,74 @@ def _client(token: str) -> httpx.AsyncClient:
 
 
 # ---------------------------------------------------------------------------
+# Room name cache + fuzzy resolver
+# ---------------------------------------------------------------------------
+
+_rooms_cache: list | None = None
+
+
+def _normalize(name: str) -> str:
+    """Entfernt Trennzeichen und lowercased: 'M-105' → 'm105'"""
+    return re.sub(r"[\s\-_.]", "", name).lower()
+
+
+async def _get_rooms_cached() -> list:
+    global _rooms_cache
+    if _rooms_cache is None:
+        token = await _get_token()
+        async with _client(token) as c:
+            r = await c.get("/api/v1/rooms/all")
+            r.raise_for_status()
+            _rooms_cache = r.json()
+    return _rooms_cache
+
+
+async def resolve_room_name(query: str) -> str:
+    """
+    Gibt den kanonischen Raumnamen zurück.
+    Sucht zuerst exakt, dann normalisiert (ohne Bindestriche/Leerzeichen).
+    Gibt den query unverändert zurück wenn kein Match gefunden.
+    """
+    rooms = await _get_rooms_cached()
+
+    # Raumnamen aus der API extrahieren (Feld heißt je nach Endpoint 'name' oder 'longName')
+    candidates: list[str] = []
+    for r in rooms:
+        if isinstance(r, dict):
+            for field in ("name", "longName", "shortName"):
+                if val := r.get(field):
+                    candidates.append(str(val))
+        elif isinstance(r, str):
+            candidates.append(r)
+
+    # 1. Exakter Treffer
+    if query in candidates:
+        return query
+
+    # 2. Normalisierter Vergleich: 'M-105' == 'M105' == 'm 105'
+    q_norm = _normalize(query)
+    for candidate in candidates:
+        if _normalize(candidate) == q_norm:
+            return candidate
+
+    # 3. Kein Treffer → original zurückgeben (API gibt dann selbst Fehler)
+    return query
+
+
+# ---------------------------------------------------------------------------
 # API helpers
 # ---------------------------------------------------------------------------
 
 async def get_all_rooms() -> list:
-    token = await _get_token()
-    async with _client(token) as c:
-        r = await c.get("/api/v1/rooms/all")
-        r.raise_for_status()
-        return r.json()
+    return await _get_rooms_cached()
 
 
 async def get_room_timetable(room_name: str, date: str | None = None) -> list:
+    canonical = await resolve_room_name(room_name)
     token = await _get_token()
     params = {"date": date} if date else {}
     async with _client(token) as c:
-        r = await c.get(f"/api/v1/timetables/room/{room_name}", params=params)
+        r = await c.get(f"/api/v1/timetables/room/{canonical}", params=params)
         r.raise_for_status()
         return r.json()
 
