@@ -23,7 +23,20 @@ class Settings(BaseSettings):
     mistral_api_key: str = ""
     openrouter_api_key: str = ""
 
+    # Zugriffskontrolle
+    # Komma-getrennte Telegram User-IDs, die den Bot nutzen dürfen.
+    # Leer = alle erlaubt (nur für Entwicklung!)
+    allowed_user_ids: str = ""
+    # Max. Anfragen pro User pro Stunde (0 = kein Limit)
+    rate_limit_per_hour: int = 20
+
     log_level: str = "INFO"
+
+    @property
+    def allowed_ids(self) -> set[int]:
+        if not self.allowed_user_ids.strip():
+            return set()
+        return {int(x.strip()) for x in self.allowed_user_ids.split(",") if x.strip()}
 
 
 settings = Settings()
