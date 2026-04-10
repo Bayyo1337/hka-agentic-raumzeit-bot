@@ -106,20 +106,40 @@ def _fmt_room(result: dict) -> str:
     sorted_days = sorted(by_day.keys(), key=lambda d: _day_order.get(d, 99))
 
     for day in sorted_days:
-        day_bookings = sorted(by_day[day], key=lambda b: _time_to_minutes(_to_hhmm(b.get("start", ""))))
+        day_bookings = sorted(_dedup_bookings(by_day[day]), key=lambda b: _time_to_minutes(_to_hhmm(b.get("start", ""))))
         if len(sorted_days) > 1:
             lines.append(f"\n*{day}:*")
-        for b in day_bookings:
-            start = _to_hhmm(b.get("start", ""))
-            end = _to_hhmm(b.get("end", ""))
-            name = b.get("name", "")
-            lines.append(f"🔴 {start}–{end} {name}")
         
-        # Frei-Slots nur pro Tag berechnen
-        free = _free_slots(day_bookings)
-        if free:
-            free_str = " · ".join(f"{s}–{e}" for s, e in free)
-            lines.append(f"✅ Frei: {free_str}")
+        current_time = _time_to_minutes("08:00")
+        end_of_day = _time_to_minutes("20:00")
+
+        for b in day_bookings:
+            start_min = _time_to_minutes(_to_hhmm(b.get("start", "")))
+            end_min = _time_to_minutes(_to_hhmm(b.get("end", "")))
+
+            # Freien Slot einfügen, wenn eine Lücke zur aktuellen Zeit besteht
+            if start_min > current_time:
+                lines.append(f"🟢 {_minutes_to_hhmm(current_time)}–{_minutes_to_hhmm(start_min)} frei")
+            
+            # Belegung anzeigen
+            course_code = b.get("name", "")
+            module = b.get("module", "")
+            lecturer = b.get("lecturer", "")
+            
+            label = f"*{course_code}*"
+            if module and module != course_code:
+                label += f" {module}"
+            if lecturer:
+                label += f" ({lecturer})"
+            
+            lines.append(f"🔴 {_to_hhmm(b.get('start', ''))}–{_to_hhmm(b.get('end', ''))} {label}")
+            
+            # Cursor auf das Ende der aktuellen Belegung setzen (max, falls Belegungen überlappen)
+            current_time = max(current_time, end_min)
+        
+        # Letzten freien Slot bis zum Tagesende einfügen
+        if current_time < end_of_day:
+            lines.append(f"🟢 {_minutes_to_hhmm(current_time)}–{_minutes_to_hhmm(end_of_day)} frei")
 
     return "\n".join(lines)
 
@@ -180,8 +200,10 @@ def _fmt_lecturer(result: dict) -> str:
 
     lecturer = result.get("lecturer", "?")
     bookings = result.get("bookings", [])
+    queried_date = result.get("queried_date", "")
 
-    lines = [f"👤 *Stundenplan {lecturer}*"]
+    date_label = _fmt_date(queried_date) if queried_date and queried_date != "heute" else queried_date
+    lines = [f"👤 *Stundenplan {lecturer}*" + (f" – {date_label}" if date_label else "")]
     if not bookings:
         lines.append("Keine Einträge für heute gefunden. An welchem Tag suchst du?")
         return "\n".join(lines)

@@ -205,6 +205,7 @@ async def run(user_message: str, history: list[dict], user_label: str = "") -> t
     )
 
     reply = formatter.format_results(collected_results, user_message)
+    log.debug("Bot Antwort: %.500s", reply)
     log.info("Tokens: input=%d output=%d gesamt=%d",
              total_input_tokens, total_output_tokens, total_input_tokens + total_output_tokens)
 

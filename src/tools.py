@@ -67,7 +67,7 @@ def lecturers_stale(max_age_days: int = 7) -> bool:
 async def build_lecturer_index() -> int:
     """
     Baut den Dozenten-Index neu auf:
-    1. Kürzel aus Kurs-iCals sammeln
+    1. Kürzel aus Kursen UND allen Raum-Belegungen sammeln
     2. HKA-Personenliste scrapen
     3. Matchen, speichern, neu laden
     Gibt Anzahl gematchter Einträge zurück.
@@ -75,73 +75,115 @@ async def build_lecturer_index() -> int:
     def _norm2ch(s: str) -> str:
         return _norm(s)[:2]
 
-    # 1. Kürzel aus Raumzeit-iCals
     token = await _get_token()
+    known: set[str] = set()
+
+    # 1a. Kürzel aus Kursen
     async with httpx.AsyncClient(base_url=settings.raumzeit_base_url, timeout=15) as c:
         r = await c.get("/api/v1/coursesofstudy/public")
         r.raise_for_status()
         abbreviations = [item["name"] for item in r.json() if isinstance(item, dict) and item.get("name")]
 
-    known: set[str] = set()
-
-    async def _fetch_contacts(key: str) -> set[str]:
+    async def _fetch_course_contacts(key: str):
         try:
             async with httpx.AsyncClient(base_url=settings.raumzeit_base_url, timeout=15) as c:
                 r = await c.get(
                     f"/api/v1/timetables/coursesemester/{key}",
                     headers={"Authorization": f"Bearer {token}", "Accept": "text/calendar"},
                 )
-            if r.status_code != 200:
-                return set()
-            return {v.strip() for line in r.text.splitlines() if line.startswith("CONTACT:") for v in line[8:].split(",") if v.strip()}
-        except Exception:
-            return set()
+            if r.status_code == 200:
+                for line in r.text.splitlines():
+                    if line.startswith("CONTACT:"):
+                        for v in line[8:].split(","):
+                            if (v := v.strip()): known.add(v)
+        except Exception: pass
 
+    # 1b. Kürzel aus ALLEN Räumen (sehr effektiv!)
+    rooms = await _get_rooms_cached()
+    
+    async def _fetch_room_lecturers(room_name: str):
+        try:
+            async with httpx.AsyncClient(
+                base_url=settings.raumzeit_base_url,
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                timeout=15
+            ) as c:
+                r = await c.get(f"/api/v1/timetables/room/{room_name}")
+            if r.status_code == 200:
+                data = r.json()
+                for entry in (data if isinstance(data, list) else []):
+                    for k in (entry.get("lecturers") or []):
+                        known.add(k)
+        except Exception: pass
+
+    log.info("Dozenten-Index: Sammle Kürzel aus Kursen und Räumen...")
+    # Kurse scannen
     keys = [f"{a}.{s}" for a in abbreviations for s in range(1, 8)]
-    BATCH = 20
-    for i in range(0, len(keys), BATCH):
-        results = await asyncio.gather(*[_fetch_contacts(k) for k in keys[i:i + BATCH]])
-        for contacts in results:
-            known |= contacts
-    log.info("Dozenten-Index: %d Kürzel aus iCals gesammelt", len(known))
+    for i in range(0, len(keys), 40):
+        await asyncio.gather(*[_fetch_course_contacts(k) for k in keys[i:i + 40]])
+    
+    # Alle Räume scannen (Batch)
+    room_names = [r.get("name") for r in rooms if isinstance(r, dict) and r.get("name")]
+    for i in range(0, len(room_names), 40):
+        await asyncio.gather(*[_fetch_room_lecturers(n) for n in room_names[i:i + 40]])
+    
+    log.info("Dozenten-Index: %d eindeutige Kürzel aus Raumzeit gesammelt", len(known))
 
     # 2. HKA-Personenliste scrapen
     HKA_BASE = "https://www.h-ka.de"
-    persons: list[tuple[str, str, str]] = []  # (name, vorname, nachname)
+    persons: list[dict] = []  # [{name, vorname, nachname, email}]
     page = 1
     async with httpx.AsyncClient(base_url=HKA_BASE, timeout=20, follow_redirects=True) as c:
         while True:
             url = f"/die-hochschule-karlsruhe/organisation-personen/personen-a-z?tx_solr%5Bpage%5D={page}"
             try:
                 r = await c.get(url, headers={"User-Agent": "Mozilla/5.0"})
-            except Exception:
-                break
-            if r.status_code != 200:
-                break
-            html = r.text
+            except Exception: break
+            if r.status_code != 200: break
+            
             import re as _re
-            # E-Mail-Obfuskierung: vorname.nachname<span style="display:none">spam prevention</span>@h-ka.de
-            for username in _re.findall(r'([\w.\-]+)<span[^>]*>spam prevention</span>@h-ka\.de', html):
+            # E-Mail-Scraper (findet mehr Formate)
+            email_pattern = r'([\w.\-]+)<span[^>]*>spam prevention</span>@h-ka\.de'
+            for username in _re.findall(email_pattern, r.text):
                 parts = username.split(".")
                 if len(parts) >= 2:
                     vorname, nachname = parts[0], parts[-1]
-                    persons.append((f"{vorname.capitalize()} {nachname.capitalize()}", vorname, nachname))
-            if f"tx_solr%5Bpage%5D={page + 1}" not in html and f"tx_solr[page]={page + 1}" not in html:
+                    name = f"{vorname.capitalize()} {nachname.capitalize()}"
+                    persons.append({
+                        "name": name, 
+                        "vorname": vorname, 
+                        "nachname": nachname, 
+                        "email": f"{username}@h-ka.de"
+                    })
+            if f"page={page + 1}" not in r.text and f"page%5D={page + 1}" not in r.text:
                 break
             page += 1
     log.info("Dozenten-Index: %d Personen von h-ka.de geladen", len(persons))
 
     # 3. Matchen
     matched: dict[str, dict] = {}
-    for name, vorname, nachname in persons:
-        prefix = _norm2ch(nachname) + _norm2ch(vorname)
-        for num in range(1, 11):
-            kuerzel = f"{prefix}{num:04d}"
-            if kuerzel in known:
-                matched[kuerzel] = {"name": name, "email": f"{vorname}.{nachname}@h-ka.de"}
-                break
+    for p in persons:
+        # Standard-Kürzel: na+vo+0001 (z.B. tama0001)
+        prefix = _norm2ch(p["nachname"]) + _norm2ch(p["vorname"])
+        # Erweiterte Heuristik: manche Kürzel nutzen mehr vom Nachnamen
+        alt_prefix = _norm(p["nachname"])[:4]
+        
+        for num in range(1, 21):
+            for pre in [prefix, alt_prefix]:
+                kuerzel = f"{pre}{num:04d}"
+                if kuerzel in known:
+                    matched[kuerzel] = {"name": p["name"], "email": p["email"]}
+                    break
 
-    # 4. Speichern + neu laden
+    # 4. Bestehende manuelle Einträge erhalten
+    try:
+        with open(_LECTURERS_PATH, encoding="utf-8") as f:
+            existing = json.load(f)
+            for k, v in existing.items():
+                if k not in matched: matched[k] = v
+    except FileNotFoundError: pass
+
+    # 5. Speichern + neu laden
     os.makedirs(os.path.dirname(_LECTURERS_PATH), exist_ok=True)
     with open(_LECTURERS_PATH, "w", encoding="utf-8") as f:
         json.dump(matched, f, ensure_ascii=False, indent=2)
@@ -324,7 +366,10 @@ async def get_room_timetable(room_name: str, date: str | None = None) -> dict:
     token = await _get_token()
     # Datum-Parameter nur für JSON-Endpoints; Text-Format wird client-seitig gefiltert
     params = {"date": date} if date else {}
-    async with _client(token) as c:
+    async with httpx.AsyncClient(
+        base_url=settings.raumzeit_base_url,
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    ) as c:
         log.debug("API → GET /timetables/room/%s  params=%s", canonical, params)
         r = await c.get(f"/api/v1/timetables/room/{canonical}", params=params)
         if r.status_code == 404:
@@ -334,16 +379,59 @@ async def get_room_timetable(room_name: str, date: str | None = None) -> dict:
     try:
         entries = r.json()
         bookings = []
-        for e in (entries if isinstance(entries, list) else []):
+        # Falls die API trotz Accept-Header Text liefert, wirft r.json() einen Fehler
+        if not isinstance(entries, list):
+             raise json.JSONDecodeError("Not a list", r.text, 0)
+        
+        for e in entries:
             if not isinstance(e, dict):
                 continue
-            start = e.get("startTime") or e.get("start", "")
-            end   = e.get("endTime")   or e.get("end", "")
-            name  = e.get("name") or e.get("longName", "")
-            bookings.append({"name": name, "start": start, "end": end})
+            
+            # Datum prüfen (firstDate ist der Tag des Termins bei WEEKLY/SINGLE)
+            occ_date = e.get("firstDate", "")
+            if date and occ_date and date != occ_date:
+                continue
+                
+            s_min = e.get("startTime")
+            e_min = e.get("endTime")
+            course_code = e.get("name", "")
+            module_name = e.get("longName", "")
+            
+            # Dozenten auflösen
+            lecturer_list = []
+            for kuerzel in (e.get("lecturers") or []):
+                _, full_name = resolve_lecturer(kuerzel)
+                lecturer_list.append(full_name or kuerzel)
+            lecturers_str = ", ".join(lecturer_list)
+            
+            if isinstance(s_min, int) and isinstance(e_min, int):
+                # Format: Minuten seit Mitternacht
+                start_str = f"{s_min // 60:02d}:{s_min % 60:02d}"
+                end_str = f"{e_min // 60:02d}:{e_min % 60:02d}"
+                
+                # Wochentag bestimmen
+                day_name = ""
+                if occ_date:
+                    try:
+                        dt = _date.fromisoformat(occ_date)
+                        day_name = _WEEKDAYS.get(dt.weekday() + 1, "")
+                    except ValueError:
+                        pass
+                
+                bookings.append({
+                    "name": course_code,
+                    "module": module_name,
+                    "lecturer": lecturers_str,
+                    "start": start_str,
+                    "end": end_str,
+                    "day": day_name,
+                    "date": occ_date
+                })
         log.debug("API ← %d  (%d Belegungen, JSON)", r.status_code, len(bookings))
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
         bookings = _parse_timetable_text(r.text, date)
+        if not bookings:
+            log.debug("API ← %d (Leeres Ergebnis, roher Text: %s)", r.status_code, r.text[:200])
         log.debug("API ← %d  (%d Belegungen, Text-Format)", r.status_code, len(bookings))
 
     return {
@@ -487,7 +575,11 @@ async def get_lecturer_timetable(account: str, date: str | None = None) -> dict:
         r.raise_for_status()
 
     bookings = _parse_ical(r.text, filter_date=date)
-    return {"lecturer": full_name or kuerzel, "bookings": bookings}
+    return {
+        "lecturer": full_name or kuerzel,
+        "bookings": bookings,
+        "queried_date": date or "heute"
+    }
 
 
 async def get_departments() -> list:

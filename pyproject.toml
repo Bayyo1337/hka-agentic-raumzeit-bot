@@ -12,6 +12,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "aiosqlite>=0.20.0",
     "httpcore[asyncio]>=1.0.9",
+    "rich>=14.3.3",
 ]
 
 [build-system]

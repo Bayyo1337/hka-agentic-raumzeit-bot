@@ -5,7 +5,14 @@ Startet den Bot und leitet Nachrichten an den Claude-Agent weiter.
 
 import asyncio
 import logging
+import sys
 from datetime import datetime, timedelta
+from rich.console import Console
+from rich.logging import RichHandler
+from rich.panel import Panel
+from rich.layout import Layout
+from rich.live import Live
+from rich.table import Table
 from telegram import Update, BotCommand
 from telegram.error import NetworkError
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
@@ -16,13 +23,29 @@ from src import db
 from src import formatter
 from src.formatter import CONFIRM_SENTINEL
 
+# Rich Konfiguration
+console = Console()
+
+def set_log_level(level_name: str) -> bool:
+    """Ändert das Log-Level aller relevanten Logger zur Laufzeit."""
+    level = getattr(logging, level_name.upper(), None)
+    if not isinstance(level, int):
+        return False
+    
+    for _name in ("src.bot", "src.agent", "src.tools", "src.db", "src.formatter"):
+        logging.getLogger(_name).setLevel(level)
+    return True
+
+# Initiales Logging mit Rich
 logging.basicConfig(
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     level=logging.WARNING,
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(rich_tracebacks=True, console=console, show_path=False)]
 )
+
 # Nur eigene Logger auf den konfigurierten Level setzen
-for _name in ("src.bot", "src.agent", "src.tools", "src.db", "src.formatter"):
-    logging.getLogger(_name).setLevel(settings.log_level)
+set_log_level(settings.log_level)
 log = logging.getLogger("src.bot")
 
 _BOT_START = datetime.now()
@@ -71,6 +94,7 @@ _ADMIN_COMMANDS = _USER_COMMANDS + [
     BotCommand("clearhistory", "Gesprächsverlauf eines Nutzers löschen"),
     BotCommand("broadcast", "Nachricht an alle Nutzer senden"),
     BotCommand("setprovider", "LLM-Provider wechseln"),
+    BotCommand("loglevel", "Log-Level ändern (info|debug|warning)"),
     BotCommand("maintenance", "Wartungsmodus ein-/ausschalten"),
 ]
 
@@ -492,6 +516,18 @@ async def cmd_setprovider(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 @_require_admin
+async def cmd_loglevel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text("Verwendung: /loglevel <info|debug|warning>")
+        return
+    level = context.args[0].lower()
+    if set_log_level(level):
+        await update.message.reply_text(f"✅ Log-Level geändert auf: {level.upper()}")
+    else:
+        await update.message.reply_text("❌ Ungültiges Level. Erlaubt: info, debug, warning")
+
+
+@_require_admin
 async def cmd_maintenance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     global _maintenance
     if not context.args:
@@ -764,7 +800,83 @@ async def _post_init(app) -> None:
     asyncio.create_task(_weekly_lecturer_refresh())
 
 
-def main() -> None:
+def make_dashboard() -> Panel:
+    """Erstellt das Status-Panel für das Terminal."""
+    table = Table.grid(expand=True)
+    table.add_column(style="cyan", justify="right")
+    table.add_column(style="white")
+
+    uptime = datetime.now() - _BOT_START
+    h, rem = divmod(int(uptime.total_seconds()), 3600)
+    m, s = divmod(rem, 60)
+    
+    current_llm = agent.current_provider()
+    level_int = logging.getLogger("src.bot").getEffectiveLevel()
+    level_name = logging.getLevelName(level_int)
+    
+    table.add_row("Uptime: ", f"{h}h {m}min {s}s")
+    table.add_row("LLM: ", f"[bold green]{current_llm}[/bold green]")
+    table.add_row("Logs: ", f"[bold yellow]{level_name}[/bold yellow]")
+    table.add_row("Status: ", "Bereit für Anfragen" if not _maintenance[0] else "[bold red]Wartung[/bold red]")
+    
+    return Panel(table, title="[bold blue]Raumzeit Bot Dashboard[/bold blue]", border_style="blue")
+
+
+# Dashboard Live-Loop
+async def dashboard_task(live: Live):
+    """Aktualisiert das Dashboard jede Sekunde."""
+    while True:
+        live.update(make_dashboard())
+        await asyncio.sleep(1)
+
+
+async def terminal_loop(app, stop_event: asyncio.Event):
+    """Schleife für Konsolenbefehle."""
+    while not stop_event.is_set():
+        try:
+            # Nutze to_thread für blockierende Eingabe
+            cmd_line = await asyncio.to_thread(input, "raumzeit> ")
+            if not cmd_line.strip():
+                continue
+            
+            parts = cmd_line.split()
+            cmd = parts[0].lower()
+            args = parts[1:]
+
+            if cmd == "exit":
+                log.info("Fahre Bot herunter...")
+                stop_event.set()
+                break
+            elif cmd == "status":
+                console.print(make_dashboard())
+            elif cmd == "loglevel":
+                if args:
+                    if set_log_level(args[0]):
+                        log.info("Loglevel auf %s gesetzt", args[0].upper())
+                    else:
+                        console.print(f"[red]Ungültiges Loglevel: {args[0]}[/red]. Erlaubt: debug, info, warning, error")
+                else:
+                    console.print("[yellow]Verwendung:[/yellow] loglevel <debug|info|warning|error>")
+            elif cmd == "sync":
+                asyncio.create_task(_run_index_build())
+                asyncio.create_task(_run_lecturer_build())
+            elif cmd == "help":
+                console.print("\n[bold cyan]Verfügbare Konsolenbefehle:[/bold cyan]")
+                console.print("  [bold green]status[/bold green]          - Zeigt das aktuelle Bot-Dashboard an")
+                console.print("  [bold green]loglevel <level>[/bold green] - Ändert die Detailtiefe der Logs (debug, info, warning, error)")
+                console.print("  [bold green]sync[/bold green]            - Startet den Neuaufbau der Kurs- und Dozenten-Indizes")
+                console.print("  [bold green]help[/bold green]            - Zeigt diese Hilfe an")
+                console.print("  [bold green]exit[/bold green]            - Beendet den Bot sicher\n")
+            else:
+                console.print(f"[red]Unbekannter Befehl: {cmd}[/red]. Nutze 'help'.")
+        except (EOFError, KeyboardInterrupt):
+            stop_event.set()
+            break
+        except Exception as e:
+            log.error("Fehler in Konsole: %s", e)
+
+
+async def main_async() -> None:
     app = (
         ApplicationBuilder()
         .token(settings.telegram_bot_token)
@@ -793,12 +905,38 @@ def main() -> None:
     app.add_handler(CommandHandler("clearhistory", cmd_clearhistory_admin))
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
     app.add_handler(CommandHandler("setprovider", cmd_setprovider))
+    app.add_handler(CommandHandler("loglevel", cmd_loglevel))
     app.add_handler(CommandHandler("maintenance", cmd_maintenance))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(_error_handler)
 
-    log.info("Bot gestartet, warte auf Nachrichten...")
-    app.run_polling()
+    stop_event = asyncio.Event()
+
+    # Bot initialisieren & starten
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+
+    # Live Dashboard & Konsole starten
+    with Live(make_dashboard(), console=console, refresh_per_second=1) as live:
+        # Task für Live-Update
+        _live_task = asyncio.create_task(dashboard_task(live))
+        # Task für Terminal-Input
+        await terminal_loop(app, stop_event)
+        _live_task.cancel()
+
+    # Sauberer Shutdown
+    log.info("Beende alle Prozesse...")
+    await app.updater.stop()
+    await app.stop()
+    await app.shutdown()
+
+
+def main() -> None:
+    try:
+        asyncio.run(main_async())
+    except (KeyboardInterrupt, SystemExit):
+        pass
 
 
 if __name__ == "__main__":
