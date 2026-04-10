@@ -19,7 +19,9 @@
       "Bash(git commit -m 'perf: compress timetable API responses before sending to LLM:*)",
       "Bash(git commit -m 'fix: remove client-side date filter, API handles it via ?date=:*)",
       "Bash(git commit -m 'fix: proper history management - no tool results in context:*)",
-      "Bash(git commit -m 'feat: whitelist + per-user rate limiting:*)"
+      "Bash(git commit -m 'feat: whitelist + per-user rate limiting:*)",
+      "Bash(curl -s -X POST https://raumzeit.hka-iwi.de/private/api/v1/authentication -H 'Content-Type: application/json' -d '{\"login\":\"rino1012\",\"password\":\"4VQ3*Av!@xR29\"}')",
+      "Bash(python3 -c \"import sys,json; [print\\(e['name'], '-', e.get\\('longName',''\\)\\) for e in json.load\\(sys.stdin\\) if isinstance\\(e,dict\\)]\")"
     ]
   }
 }
