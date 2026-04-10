@@ -1,14 +1,15 @@
 """
-LLM-Agent mit Tool-Use Loop via LiteLLM.
+LLM-Agent: Nutzernachricht → JSON-Extraktion → parallele API-Calls → Formatter.
+
+Das LLM parst nur die Absicht und gibt strukturiertes JSON zurück.
+Python führt alle API-Calls aus; formatter.py übernimmt die Antwort.
+
 Unterstützte Provider (per LLM_PROVIDER in .env):
-
-  claude   → Anthropic Claude          (claude-sonnet-4-6 / claude-haiku-4-5-20251001)
-  gemini   → Google Gemini             (gemini-2.0-flash)  ← kostenlos via AI Studio
-  groq     → Groq / Llama 3.3 70B     (llama-3.3-70b-versatile) ← kostenlos
-  mistral  → Mistral AI                (mistral-small-latest)    ← kostenlos
-  openrouter → OpenRouter (viele Modelle, teils kostenlos)
-
-Modell kann mit LLM_MODEL überschrieben werden.
+  claude     → Anthropic Claude          (claude-sonnet-4-6)
+  gemini     → Google Gemini             (gemini-2.0-flash)
+  groq       → Groq / Llama 3.3 70B     (llama-3.3-70b-versatile)
+  mistral    → Mistral AI                (mistral-small-latest)
+  openrouter → OpenRouter
 """
 
 import asyncio
@@ -18,7 +19,7 @@ import os
 from datetime import date
 import litellm
 from src.config import settings
-from src.tools import TOOL_DEFINITIONS, TOOL_HANDLERS
+from src.tools import TOOL_HANDLERS
 from src import formatter
 
 log = logging.getLogger(__name__)
@@ -33,38 +34,43 @@ _DEFAULTS: dict[str, str] = {
     "openrouter":  "openrouter/meta-llama/llama-3.3-70b-instruct:free",
 }
 
-_SYSTEM_PROMPT_BASE = """Du bist ein Assistent für das Raumzeit-Buchungssystem der HKA (Hochschule Karlsruhe).
+_EXTRACTION_PROMPT_BASE = """Du bist ein Intent-Parser für das Raumzeit-Buchungssystem der HKA (Hochschule Karlsruhe).
 
-REGEL: Du MUSST bei JEDER Anfrage zuerst ein Tool aufrufen. Antworte NIE ohne vorherigen Tool-Aufruf.
-- Raumfragen → get_room_timetable (bei Unklarheit erst get_all_rooms)
-- Kurs-Stundenplan → get_course_timetable direkt mit Format "KÜRZEL.SEMESTER" (z.B. "MABB.6")
-  → get_courses_of_study NUR aufrufen wenn das Kürzel wirklich unklar ist
-  → Kürzel-Beispiele: MABB=Maschinenbau Bachelor, INFB=Informatik Bachelor, IWIB=Wirtschaftsinformatik
-- Dozenten-Stundenplan → get_lecturer_timetable (Account-Kürzel, z.B. "muel")
-- "heute" = heutiges Datum, "morgen" = heutiges Datum + 1 Tag (YYYY-MM-DD)
-- Samstag und Sonntag: KEIN Tool-Call nötig – antworte direkt "Am Wochenende finden keine Vorlesungen statt"
-- "diese Woche" / "nächste Tage": MAXIMAL 5 separate Datums-Calls (Mo–Fr)
-- Ohne konkretes Datum ("zeig Stundenplan"): KEIN date-Parameter – gibt aktuelle Woche zurück
-- NIEMALS mehr als 6 Tool-Calls pro Anfrage
+Analysiere die Nutzernachricht und gib ausschließlich valides JSON zurück. Kein Text, keine Erklärung.
 
-WICHTIG: Deine Aufgabe ist NUR die Tool-Auswahl und Parametrisierung.
-Die Formatierung der Antwort übernimmt das System automatisch.
-Gib nach den Tool-Calls KEINEN Text aus."""
+Verfügbare Tools:
+- get_room_timetable: room_name (z.B. "M-001"), date (YYYY-MM-DD, optional)
+- get_course_timetable: course_key ("KÜRZEL.SEMESTER", z.B. "MABB.6"), date (YYYY-MM-DD, optional)
+- get_lecturer_timetable: account (vollständiger Name z.B. "Masha Taheran", Nachname z.B. "Taheran", oder Kürzel z.B. "tama0001"), date (YYYY-MM-DD, optional)
+- get_all_rooms: keine Parameter
+
+Regeln:
+- Wochenende → {"weekend": true}
+- Konkreter Tag genannt ("Montag", "nächste Woche Dienstag", "heute", "morgen"): GENAU 1 Call mit diesem date
+- Ganze Woche ("diese Woche", "nächste Woche" ohne Tagangabe): 5 Calls für Mo–Fr mit je einem date
+- Kein Datum ("zeig Stundenplan"): date weglassen
+- Max. 6 Calls gesamt
+
+Kürzel-Beispiele: MABB=Maschinenbau, INFB=Informatik, IWIB=Wirtschaftsinformatik, EIMB=Elektro/IT
+
+Ausgabeformat:
+{"calls": [{"tool": "TOOLNAME", "args": {"param": "wert"}}, ...]}"""
 
 
-def _system_prompt() -> str:
-    return f"{_SYSTEM_PROMPT_BASE}\n\nHeutiges Datum: {date.today().isoformat()}"
+def _extraction_prompt() -> str:
+    return f"{_EXTRACTION_PROMPT_BASE}\n\nHeutiges Datum: {date.today().isoformat()}"
 
 
 def _resolve_model() -> str:
     if settings.llm_model:
         return settings.llm_model
-    return _DEFAULTS.get(settings.llm_provider, _DEFAULTS["claude"])
+    provider = _provider_override or settings.llm_provider
+    return _DEFAULTS.get(provider, _DEFAULTS["claude"])
 
 
-def _set_api_key() -> None:
+def _set_api_key(provider: str | None = None) -> None:
     """Setzt den passenden API-Key als Env-Var für LiteLLM."""
-    p = settings.llm_provider
+    p = provider or settings.llm_provider
     if p == "claude":
         os.environ["ANTHROPIC_API_KEY"] = settings.anthropic_api_key
     elif p == "gemini":
@@ -79,15 +85,30 @@ def _set_api_key() -> None:
 
 _set_api_key()
 
+_provider_override: str | None = None
+
+
+def set_provider(provider: str) -> bool:
+    """Wechselt den LLM-Provider zur Laufzeit. Gibt False zurück wenn unbekannt."""
+    global _provider_override
+    if provider not in _DEFAULTS:
+        return False
+    _provider_override = provider
+    _set_api_key(provider)
+    return True
+
+
+def current_provider() -> str:
+    return _provider_override or settings.llm_provider
+
 
 MAX_HISTORY_EXCHANGES = 3  # nur die letzten N Frage+Antwort-Paare behalten
-MAX_TOOL_CALLS = 6        # Sicherheitslimit: nie mehr als N Tool-Calls pro Anfrage
+MAX_TOOL_CALLS = 6        # Sicherheitslimit: nie mehr als N API-Calls pro Anfrage
 
 
 async def run(user_message: str, history: list[dict], user_label: str = "") -> tuple[str, int, int, list]:
     """
-    Tool-Use Loop: Nutzernachricht → Tool-Calls → Python-Formatter → Antwort.
-    Das LLM wählt nur Tools aus; die Antwortgenerierung übernimmt formatter.py.
+    Extraktion: Nutzernachricht → JSON → parallele API-Calls → Formatter → Antwort.
 
     Returns:
         (reply, input_tokens, output_tokens, collected_results)
@@ -95,119 +116,102 @@ async def run(user_message: str, history: list[dict], user_label: str = "") -> t
     # Wochenend-Schnellcheck: "morgen" auf Sa/So → direkt antworten
     tomorrow = date.today().toordinal() + 1
     tomorrow_weekday = date.fromordinal(tomorrow).weekday()  # 5=Sa, 6=So
-    msg_lower = user_message.lower()
-    if tomorrow_weekday >= 5 and "morgen" in msg_lower:
+    if tomorrow_weekday >= 5 and "morgen" in user_message.lower():
         reply = "Am Wochenende finden keine Vorlesungen statt."
         history.append({"role": "user", "content": user_message})
         history.append({"role": "assistant", "content": reply})
         return reply, 0, 0, []
 
+    # History kürzen: lange Antworten (z.B. Raumlisten) kosten viele Tokens
+    # und sind für das Intent-Parsing meist irrelevant.
+    processed_history = []
+    for msg in history:
+        content = msg.get("content", "")
+        if len(content) > 1000:
+            content = content[:1000] + "... [gekürzt]"
+        processed_history.append({"role": msg["role"], "content": content})
+
     model = _resolve_model()
-    messages = list(history) + [{"role": "user", "content": user_message}]
+    messages = (
+        [{"role": "system", "content": _extraction_prompt()}]
+        + processed_history
+        + [{"role": "user", "content": user_message}]
+    )
     log.debug("User %s: %.80s", user_label, user_message)
 
-    collected_results: list[tuple[str, dict]] = []
-    total_tool_calls = 0
-    no_tool_retries = 0
-    total_input_tokens = 0
-    total_output_tokens = 0
+    # Einzelner LLM-Call zur Intent-Extraktion
+    for attempt in range(3):
+        try:
+            response = await litellm.acompletion(
+                model=model,
+                messages=messages,
+                response_format={"type": "json_object"},
+                max_tokens=512,
+            )
+            break
+        except litellm.RateLimitError:
+            if attempt == 2:
+                raise
+            wait = 10 * (attempt + 1)
+            log.warning("Rate limit – warte %ds (Versuch %d/3)", wait, attempt + 1)
+            await asyncio.sleep(wait)
 
-    while True:
-        # Solange Tools aufgerufen wurden oder noch kein einziger Call stattfand:
-        # tool_choice="required" erzwingt Tool-Call.
-        # Nach mindestens einem Call: "auto" erlaubt dem Modell zu stoppen.
-        tool_choice = "auto" if collected_results else "required"
+    usage = getattr(response, "usage", None)
+    total_input_tokens = getattr(usage, "prompt_tokens", 0) or 0 if usage else 0
+    total_output_tokens = getattr(usage, "completion_tokens", 0) or 0 if usage else 0
 
-        for attempt in range(3):
-            try:
-                response = await litellm.acompletion(
-                    model=model,
-                    messages=[{"role": "system", "content": _system_prompt()}] + messages,
-                    tools=TOOL_DEFINITIONS,
-                    tool_choice=tool_choice,
-                    max_tokens=512,  # nur Tool-Calls nötig, kein langer Text
-                )
-                break
-            except litellm.RateLimitError:
-                if attempt == 2:
-                    raise
-                wait = 10 * (attempt + 1)
-                log.warning("Rate limit – warte %ds (Versuch %d/3)", wait, attempt + 1)
-                await asyncio.sleep(wait)
+    raw = response.choices[0].message.content or ""
+    log.debug("LLM Extraktion: %s", raw[:300])
 
-        usage = getattr(response, "usage", None)
-        if usage:
-            total_input_tokens += getattr(usage, "prompt_tokens", 0) or 0
-            total_output_tokens += getattr(usage, "completion_tokens", 0) or 0
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        log.warning("Ungültiges JSON: %s", raw[:200])
+        reply = "Entschuldigung, ich konnte die Anfrage nicht verstehen. Bitte formuliere sie anders."
+        history.append({"role": "user", "content": user_message})
+        history.append({"role": "assistant", "content": reply})
+        return reply, total_input_tokens, total_output_tokens, []
 
-        choice = response.choices[0]
-        msg = choice.message
-        messages.append(msg.model_dump(exclude_none=True))
+    if parsed.get("weekend"):
+        reply = "Am Wochenende finden keine Vorlesungen statt."
+        history.append({"role": "user", "content": user_message})
+        history.append({"role": "assistant", "content": reply})
+        return reply, total_input_tokens, total_output_tokens, []
 
-        if msg.tool_calls:
-            for tc in msg.tool_calls:
-                log.debug("LLM → tool: %s(%s)", tc.function.name, tc.function.arguments)
-        else:
-            log.debug("LLM → fertig (keine weiteren Tool-Calls)")
+    calls = parsed.get("calls", [])[:MAX_TOOL_CALLS]
+    if not calls:
+        log.warning("Keine Calls im JSON: %s", raw[:200])
+        reply = "Entschuldigung, ich konnte die Anfrage nicht verarbeiten."
+        history.append({"role": "user", "content": user_message})
+        history.append({"role": "assistant", "content": reply})
+        return reply, total_input_tokens, total_output_tokens, []
 
-        if not msg.tool_calls:
-            if not collected_results and no_tool_retries < 2:
-                # Modell hat tool_choice="required" ignoriert — explizit nachfordern
-                no_tool_retries += 1
-                log.warning("Modell hat Tools nicht aufgerufen (Versuch %d/2)", no_tool_retries)
-                messages.append({
-                    "role": "user",
-                    "content": "Bitte nutze die verfügbaren Tools, um die Anfrage zu beantworten.",
-                })
-                continue
+    # Alle Calls parallel ausführen
+    async def _execute(call: dict) -> tuple[str, dict]:
+        name = call.get("tool", "")
+        args = call.get("args", {})
+        log.debug("LLM → tool: %s(%s)", name, args)
+        handler = TOOL_HANDLERS.get(name)
+        if not handler:
+            return name, {"error": f"Unbekanntes Tool: {name}"}
+        try:
+            return name, await handler(args)
+        except Exception as exc:
+            log.exception("Tool '%s' fehlgeschlagen", name)
+            return name, {"error": str(exc)}
 
-            # Alle Tool-Calls abgeschlossen → Python-Formatter übernimmt
-            reply = formatter.format_results(collected_results, user_message)
-            log.info("Tokens: input=%d output=%d gesamt=%d", total_input_tokens, total_output_tokens, total_input_tokens + total_output_tokens)
+    collected_results: list[tuple[str, dict]] = list(
+        await asyncio.gather(*[_execute(c) for c in calls])
+    )
 
-            history.append({"role": "user", "content": user_message})
-            history.append({"role": "assistant", "content": reply})
-            max_entries = MAX_HISTORY_EXCHANGES * 2
-            if len(history) > max_entries:
-                del history[:-max_entries]
+    reply = formatter.format_results(collected_results, user_message)
+    log.info("Tokens: input=%d output=%d gesamt=%d",
+             total_input_tokens, total_output_tokens, total_input_tokens + total_output_tokens)
 
-            return reply, total_input_tokens, total_output_tokens, collected_results
+    history.append({"role": "user", "content": user_message})
+    history.append({"role": "assistant", "content": reply})
+    max_entries = MAX_HISTORY_EXCHANGES * 2
+    if len(history) > max_entries:
+        del history[:-max_entries]
 
-        # Sicherheitslimit prüfen
-        total_tool_calls += len(msg.tool_calls)
-        if total_tool_calls > MAX_TOOL_CALLS:
-            log.warning("Tool-Call-Limit (%d) erreicht – formatiere bisherige Ergebnisse", MAX_TOOL_CALLS)
-            reply = formatter.format_results(collected_results, user_message)
-            log.info("Tokens: input=%d output=%d gesamt=%d", total_input_tokens, total_output_tokens, total_input_tokens + total_output_tokens)
-            history.append({"role": "user", "content": user_message})
-            history.append({"role": "assistant", "content": reply})
-            if len(history) > MAX_HISTORY_EXCHANGES * 2:
-                del history[:-MAX_HISTORY_EXCHANGES * 2]
-            return reply, total_input_tokens, total_output_tokens, collected_results
-
-        # Tool-Calls ausführen
-        tool_results = []
-        for tc in msg.tool_calls:
-            name = tc.function.name
-            try:
-                inp = json.loads(tc.function.arguments)
-                handler = TOOL_HANDLERS.get(name)
-                result = await handler(inp) if handler else {"error": f"Unbekanntes Tool: {name}"}
-            except Exception as exc:
-                log.exception("Tool '%s' fehlgeschlagen", name)
-                result = {"error": str(exc)}
-
-            collected_results.append((name, result))
-
-            content = json.dumps(result, ensure_ascii=False)
-            if len(content) > 6000:
-                content = content[:6000] + "\n... (gekürzt)"
-                log.warning("Tool '%s' Antwort auf 6000 Zeichen gekürzt", name)
-
-            tool_results.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": content,
-            })
-
-        messages.extend(tool_results)
+    return reply, total_input_tokens, total_output_tokens, collected_results

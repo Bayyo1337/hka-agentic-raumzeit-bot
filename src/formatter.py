@@ -3,12 +3,15 @@ Python-Formatter: wandelt Tool-Ergebnisse in lesbaren Telegram-Text um.
 Das LLM wählt nur Tools aus – die Präsentation macht dieser Modul.
 """
 
-from datetime import date as _date, datetime as _datetime
+from datetime import date as _date
 
 _WEEKDAY_DE = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
 
 # Tools die nur als Zwischenschritt dienen (kein eigenes Format nötig)
 _LOOKUP_TOOLS = {"get_courses_of_study", "get_all_rooms", "get_departments"}
+
+# Sentinel string used by the escalation logic in bot.py to detect empty course results
+CONFIRM_SENTINEL = "❓ Stimmt das so? (ja / nein)"
 
 
 def _fmt_date(iso_date: str) -> str:
@@ -47,7 +50,7 @@ def _dedup_bookings(bookings: list[dict]) -> list[dict]:
     seen: set[tuple] = set()
     result = []
     for b in bookings:
-        key = (_to_hhmm(b.get("start", "")), _to_hhmm(b.get("end", "")), b.get("name", ""))
+        key = (_to_hhmm(b.get("start", "")), _to_hhmm(b.get("end", "")), b.get("name", ""), b.get("room", ""))
         if key not in seen:
             seen.add(key)
             result.append(b)
@@ -90,20 +93,33 @@ def _fmt_room(result: dict) -> str:
     lines = [f"🏫 *{room}*" + (f" – {date_label}" if date_label else "")]
 
     if not bookings:
-        lines.append("✅ Ganztägig frei")
+        lines.append("✅ Keine Belegungen gefunden (möglicherweise frei)")
         return "\n".join(lines)
 
-    bookings_sorted = sorted(_dedup_bookings(bookings), key=lambda b: _to_hhmm(b.get("start", "")))
-    for b in bookings_sorted:
-        start = _to_hhmm(b.get("start", ""))
-        end = _to_hhmm(b.get("end", ""))
-        name = b.get("name", "")
-        lines.append(f"🔴 {start}–{end} {name}")
+    # Gruppiere nach Tag
+    from collections import defaultdict
+    by_day: dict[str, list] = defaultdict(list)
+    for b in bookings:
+        by_day[b.get("day") or ""].append(b)
 
-    free = _free_slots(bookings_sorted)
-    if free:
-        free_str = " · ".join(f"{s}–{e}" for s, e in free)
-        lines.append(f"\n✅ Frei: {free_str}")
+    _day_order = {d: i for i, d in enumerate(_WEEKDAY_DE)}
+    sorted_days = sorted(by_day.keys(), key=lambda d: _day_order.get(d, 99))
+
+    for day in sorted_days:
+        day_bookings = sorted(by_day[day], key=lambda b: _time_to_minutes(_to_hhmm(b.get("start", ""))))
+        if len(sorted_days) > 1:
+            lines.append(f"\n*{day}:*")
+        for b in day_bookings:
+            start = _to_hhmm(b.get("start", ""))
+            end = _to_hhmm(b.get("end", ""))
+            name = b.get("name", "")
+            lines.append(f"🔴 {start}–{end} {name}")
+        
+        # Frei-Slots nur pro Tag berechnen
+        free = _free_slots(day_bookings)
+        if free:
+            free_str = " · ".join(f"{s}–{e}" for s, e in free)
+            lines.append(f"✅ Frei: {free_str}")
 
     return "\n".join(lines)
 
@@ -127,16 +143,15 @@ def _fmt_course(result: dict) -> str:
     if not bookings:
         date_label = _fmt_date(queried_date) if queried_date and queried_date != "aktuelles Semester" else queried_date
         base = f"📅 *{course}*: Keine Einträge" + (f" für {date_label}" if date_label else "") + "."
-        return base + "\n\n❓ Stimmt das so? (ja / nein)"
+        return base + "\n\n" + CONFIRM_SENTINEL
 
     # Gruppiere nach Datum → Gruppe
     from collections import defaultdict
     by_date: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
     for b in bookings:
-        date_str = ""
-        start = b.get("start", "")
-        if "T" in start:
-            date_str = start.split("T")[0]
+        date_str = b.get("date") or ""
+        if not date_str and "T" in b.get("start", ""):
+            date_str = b["start"].split("T")[0]
         gruppe = b.get("gruppe", course)
         by_date[date_str][gruppe].append(b)
 
@@ -168,10 +183,10 @@ def _fmt_lecturer(result: dict) -> str:
 
     lines = [f"👤 *Stundenplan {lecturer}*"]
     if not bookings:
-        lines.append("Keine Einträge gefunden.")
+        lines.append("Keine Einträge für heute gefunden. An welchem Tag suchst du?")
         return "\n".join(lines)
 
-    for b in sorted(bookings, key=lambda b: b.get("start", "")):
+    for b in sorted(_dedup_bookings(bookings), key=lambda b: b.get("start", "")):
         start = _to_hhmm(b.get("start", ""))
         end = _to_hhmm(b.get("end", ""))
         name = b.get("name", "")

@@ -8,15 +8,20 @@ import os
 import sys
 from pathlib import Path
 
+import httpx
 from dotenv import load_dotenv
+
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-import httpx
+GREEN = "\033[0;32m"
+RED = "\033[0;31m"
+YELLOW = "\033[1;33m"
+NC = "\033[0m"
 
-GREEN = "\033[0;32m"; RED = "\033[0;31m"; YELLOW = "\033[1;33m"; NC = "\033[0m"
-ok   = lambda msg: print(f"  {GREEN}✓{NC}  {msg}")
-fail = lambda msg: print(f"  {RED}✗{NC}  {msg}")
-info = lambda msg: print(f"  {YELLOW}i{NC}  {msg}")
+
+def ok(msg): print(f"  {GREEN}✓{NC}  {msg}")
+def fail(msg): print(f"  {RED}✗{NC}  {msg}")
+def info(msg): print(f"  {YELLOW}i{NC}  {msg}")
 
 
 async def check_raumzeit() -> bool:
