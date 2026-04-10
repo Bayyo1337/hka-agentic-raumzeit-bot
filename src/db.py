@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import aiosqlite
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +36,15 @@ async def init() -> None:
                 chat_id  INTEGER PRIMARY KEY,
                 messages TEXT NOT NULL DEFAULT '[]'
             );
+
+            CREATE TABLE IF NOT EXISTS course_index (
+                full_key      TEXT PRIMARY KEY,
+                abbreviation  TEXT NOT NULL,
+                semester      INTEGER NOT NULL,
+                group_letter  TEXT NOT NULL DEFAULT '',
+                discovered_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_course_abbr ON course_index(abbreviation, semester);
         """)
         await db.commit()
     log.info("Datenbank initialisiert: %s", DB_PATH)
@@ -158,6 +167,49 @@ async def get_all_tokens() -> dict[int, tuple[int, int]]:
     return {r[0]: (r[1], r[2]) for r in rows}
 
 
+# ── Kurs-Index ───────────────────────────────────────────────────────────────
+
+async def get_course_variants(abbreviation: str, semester: int) -> list[str]:
+    """Gibt alle bekannten full_keys für ein Kürzel+Semester zurück, z.B. ['MABB.7', 'MABB.7.A']."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT full_key FROM course_index WHERE abbreviation=? AND semester=? ORDER BY full_key",
+            (abbreviation, semester),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [r[0] for r in rows]
+
+
+async def save_course_index(entries: list[dict]) -> None:
+    """Bulk-Upsert für course_index. entries: [{'full_key', 'abbreviation', 'semester', 'group_letter'}]"""
+    now = datetime.now().isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.executemany("""
+            INSERT INTO course_index (full_key, abbreviation, semester, group_letter, discovered_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(full_key) DO UPDATE SET discovered_at = excluded.discovered_at
+        """, [(e["full_key"], e["abbreviation"], e["semester"], e["group_letter"], now) for e in entries])
+        await db.commit()
+
+
+async def course_index_stale(max_age_days: int = 7) -> bool:
+    """True wenn der Index leer ist oder der älteste Eintrag älter als max_age_days Tage."""
+    cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT MIN(discovered_at) FROM course_index") as cur:
+            row = await cur.fetchone()
+    if not row or not row[0]:
+        return True
+    return row[0] < cutoff
+
+
+async def get_course_index_count() -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT COUNT(*) FROM course_index") as cur:
+            (count,) = await cur.fetchone()
+    return count
+
+
 # ── Chat-History ─────────────────────────────────────────────────────────────
 
 async def load_history(chat_id: int) -> list[dict]:
@@ -177,6 +229,15 @@ async def save_history(chat_id: int, messages: list[dict]) -> None:
             ON CONFLICT(chat_id) DO UPDATE SET messages = excluded.messages
         """, (chat_id, json.dumps(messages, ensure_ascii=False)))
         await db.commit()
+
+
+async def save_feedback_log(chat_id: int, data: dict) -> str:
+    """Speichert eine Feedback-JSON-Datei für manuelle Nachbearbeitung."""
+    os.makedirs("data/feedback", exist_ok=True)
+    path = f"data/feedback/{date.today().isoformat()}_{chat_id}.json"
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    return path
 
 
 async def clear_history(chat_id: int) -> None:

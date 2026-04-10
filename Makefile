@@ -1,6 +1,8 @@
 .PHONY: run check reset lint clean
 
 run:
+	find . -type d -name __pycache__ -exec rm -rf {} +
+	find . -name "*.pyc" -delete
 	uv sync --quiet
 	uv run python -m src.bot
 

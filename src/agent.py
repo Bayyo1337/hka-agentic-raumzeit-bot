@@ -19,6 +19,7 @@ from datetime import date
 import litellm
 from src.config import settings
 from src.tools import TOOL_DEFINITIONS, TOOL_HANDLERS
+from src import formatter
 
 log = logging.getLogger(__name__)
 litellm.drop_params = True      # ignoriert unsupported params statt Fehler
@@ -36,17 +37,19 @@ _SYSTEM_PROMPT_BASE = """Du bist ein Assistent für das Raumzeit-Buchungssystem 
 
 REGEL: Du MUSST bei JEDER Anfrage zuerst ein Tool aufrufen. Antworte NIE ohne vorherigen Tool-Aufruf.
 - Raumfragen → get_room_timetable (bei Unklarheit erst get_all_rooms)
-- Kurs-Stundenplan → IMMER zuerst get_courses_of_study aufrufen um den exakten Bezeichner zu finden, dann get_course_timetable
+- Kurs-Stundenplan → get_course_timetable direkt mit Format "KÜRZEL.SEMESTER" (z.B. "MABB.6")
+  → get_courses_of_study NUR aufrufen wenn das Kürzel wirklich unklar ist
+  → Kürzel-Beispiele: MABB=Maschinenbau Bachelor, INFB=Informatik Bachelor, IWIB=Wirtschaftsinformatik
 - Dozenten-Stundenplan → get_lecturer_timetable (Account-Kürzel, z.B. "muel")
 - "heute" = heutiges Datum, "morgen" = heutiges Datum + 1 Tag (YYYY-MM-DD)
+- Samstag und Sonntag: KEIN Tool-Call nötig – antworte direkt "Am Wochenende finden keine Vorlesungen statt"
+- "diese Woche" / "nächste Tage": MAXIMAL 5 separate Datums-Calls (Mo–Fr)
+- Ohne konkretes Datum ("zeig Stundenplan"): KEIN date-Parameter – gibt aktuelle Woche zurück
+- NIEMALS mehr als 6 Tool-Calls pro Anfrage
 
-ANTWORT-FORMAT (Telegram Markdown):
-- Telegram Markdown: *fett* mit einfachen Sternchen (NICHT **doppelt**)
-- Nutze Emojis sparsam aber gezielt: 📅 für Datum, 🏫 für Raum, ✅ für frei, 🔴 für belegt
-- Belegungen als kompakte Liste: `09:50–11:20 Werkstoffkunde`
-- Freie Slots klar hervorheben, sinnvolle Uhrzeiten nennen (nicht "ab 00:00")
-- Kein Smalltalk am Ende, keine Rückfragen
-- Antworte auf Deutsch, präzise und knapp"""
+WICHTIG: Deine Aufgabe ist NUR die Tool-Auswahl und Parametrisierung.
+Die Formatierung der Antwort übernimmt das System automatisch.
+Gib nach den Tool-Calls KEINEN Text aus."""
 
 
 def _system_prompt() -> str:
@@ -78,27 +81,42 @@ _set_api_key()
 
 
 MAX_HISTORY_EXCHANGES = 3  # nur die letzten N Frage+Antwort-Paare behalten
+MAX_TOOL_CALLS = 6        # Sicherheitslimit: nie mehr als N Tool-Calls pro Anfrage
 
 
-async def run(user_message: str, history: list[dict]) -> tuple[str, int, int]:
+async def run(user_message: str, history: list[dict], user_label: str = "") -> tuple[str, int, int, list]:
     """
-    Tool-Use Loop: Nutzernachricht → Tool-Calls → finale Antwort.
-    Aktualisiert history in-place mit nur User+Assistent-Text (keine Tool-Ergebnisse).
+    Tool-Use Loop: Nutzernachricht → Tool-Calls → Python-Formatter → Antwort.
+    Das LLM wählt nur Tools aus; die Antwortgenerierung übernimmt formatter.py.
 
     Returns:
-        (reply, input_tokens, output_tokens)
+        (reply, input_tokens, output_tokens, collected_results)
     """
+    # Wochenend-Schnellcheck: "morgen" auf Sa/So → direkt antworten
+    tomorrow = date.today().toordinal() + 1
+    tomorrow_weekday = date.fromordinal(tomorrow).weekday()  # 5=Sa, 6=So
+    msg_lower = user_message.lower()
+    if tomorrow_weekday >= 5 and "morgen" in msg_lower:
+        reply = "Am Wochenende finden keine Vorlesungen statt."
+        history.append({"role": "user", "content": user_message})
+        history.append({"role": "assistant", "content": reply})
+        return reply, 0, 0, []
+
     model = _resolve_model()
     messages = list(history) + [{"role": "user", "content": user_message}]
+    log.debug("User %s: %.80s", user_label, user_message)
 
-    any_tool_called = False
+    collected_results: list[tuple[str, dict]] = []
+    total_tool_calls = 0
     no_tool_retries = 0
     total_input_tokens = 0
     total_output_tokens = 0
+
     while True:
-        # Tools erzwingen, bis mindestens ein Tool-Call stattgefunden hat.
-        # Danach "auto", damit das Modell die finale Textantwort geben kann.
-        tool_choice = "auto" if any_tool_called else "required"
+        # Solange Tools aufgerufen wurden oder noch kein einziger Call stattfand:
+        # tool_choice="required" erzwingt Tool-Call.
+        # Nach mindestens einem Call: "auto" erlaubt dem Modell zu stoppen.
+        tool_choice = "auto" if collected_results else "required"
 
         for attempt in range(3):
             try:
@@ -107,7 +125,7 @@ async def run(user_message: str, history: list[dict]) -> tuple[str, int, int]:
                     messages=[{"role": "system", "content": _system_prompt()}] + messages,
                     tools=TOOL_DEFINITIONS,
                     tool_choice=tool_choice,
-                    max_tokens=4096,
+                    max_tokens=512,  # nur Tool-Calls nötig, kein langer Text
                 )
                 break
             except litellm.RateLimitError:
@@ -126,35 +144,46 @@ async def run(user_message: str, history: list[dict]) -> tuple[str, int, int]:
         msg = choice.message
         messages.append(msg.model_dump(exclude_none=True))
 
+        if msg.tool_calls:
+            for tc in msg.tool_calls:
+                log.debug("LLM → tool: %s(%s)", tc.function.name, tc.function.arguments)
+        else:
+            log.debug("LLM → fertig (keine weiteren Tool-Calls)")
+
         if not msg.tool_calls:
-            if not any_tool_called and no_tool_retries < 2:
+            if not collected_results and no_tool_retries < 2:
                 # Modell hat tool_choice="required" ignoriert — explizit nachfordern
                 no_tool_retries += 1
-                log.warning("Modell hat Tools nicht aufgerufen (Versuch %d/2) – fordere erneut", no_tool_retries)
+                log.warning("Modell hat Tools nicht aufgerufen (Versuch %d/2)", no_tool_retries)
                 messages.append({
                     "role": "user",
-                    "content": "Bitte nutze die verfügbaren Tools, um die Anfrage zu beantworten. Antworte nicht ohne Tool-Aufruf.",
+                    "content": "Bitte nutze die verfügbaren Tools, um die Anfrage zu beantworten.",
                 })
                 continue
 
-            if not msg.content and any_tool_called and no_tool_retries < 2:
-                # Modell hat Tool-Ergebnisse bekommen aber nichts geantwortet — nachfordern
-                no_tool_retries += 1
-                log.warning("Modell hat nach Tool-Calls leere Antwort gegeben – fordere Interpretation")
-                messages.append({
-                    "role": "user",
-                    "content": "Bitte beantworte jetzt die ursprüngliche Frage auf Basis der Tool-Ergebnisse.",
-                })
-                continue
+            # Alle Tool-Calls abgeschlossen → Python-Formatter übernimmt
+            reply = formatter.format_results(collected_results, user_message)
+            log.info("Tokens: input=%d output=%d gesamt=%d", total_input_tokens, total_output_tokens, total_input_tokens + total_output_tokens)
 
-            reply = msg.content or "Ich konnte keine Antwort generieren. Bitte versuche es nochmal."
             history.append({"role": "user", "content": user_message})
             history.append({"role": "assistant", "content": reply})
             max_entries = MAX_HISTORY_EXCHANGES * 2
             if len(history) > max_entries:
                 del history[:-max_entries]
+
+            return reply, total_input_tokens, total_output_tokens, collected_results
+
+        # Sicherheitslimit prüfen
+        total_tool_calls += len(msg.tool_calls)
+        if total_tool_calls > MAX_TOOL_CALLS:
+            log.warning("Tool-Call-Limit (%d) erreicht – formatiere bisherige Ergebnisse", MAX_TOOL_CALLS)
+            reply = formatter.format_results(collected_results, user_message)
             log.info("Tokens: input=%d output=%d gesamt=%d", total_input_tokens, total_output_tokens, total_input_tokens + total_output_tokens)
-            return reply, total_input_tokens, total_output_tokens
+            history.append({"role": "user", "content": user_message})
+            history.append({"role": "assistant", "content": reply})
+            if len(history) > MAX_HISTORY_EXCHANGES * 2:
+                del history[:-MAX_HISTORY_EXCHANGES * 2]
+            return reply, total_input_tokens, total_output_tokens, collected_results
 
         # Tool-Calls ausführen
         tool_results = []
@@ -168,9 +197,10 @@ async def run(user_message: str, history: list[dict]) -> tuple[str, int, int]:
                 log.exception("Tool '%s' fehlgeschlagen", name)
                 result = {"error": str(exc)}
 
+            collected_results.append((name, result))
+
             content = json.dumps(result, ensure_ascii=False)
             if len(content) > 6000:
-                # Kürzen um Token-Limit nicht zu sprengen
                 content = content[:6000] + "\n... (gekürzt)"
                 log.warning("Tool '%s' Antwort auf 6000 Zeichen gekürzt", name)
 
@@ -180,5 +210,4 @@ async def run(user_message: str, history: list[dict]) -> tuple[str, int, int]:
                 "content": content,
             })
 
-        any_tool_called = True
         messages.extend(tool_results)

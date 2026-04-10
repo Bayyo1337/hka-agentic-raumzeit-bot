@@ -30,7 +30,9 @@ class Settings(BaseSettings):
     # Komma-getrennte Telegram User-IDs mit Admin-Rechten
     admin_user_ids: str = ""
     # Max. Anfragen pro User pro Stunde (0 = kein Limit)
-    rate_limit_per_hour: int = 20
+    rate_limit_per_hour: int = 0
+    # Max. Tokens pro User gesamt (0 = kein Limit)
+    max_tokens_per_user: int = 0
 
     log_level: str = "INFO"
 

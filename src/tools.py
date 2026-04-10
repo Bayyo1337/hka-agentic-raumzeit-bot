@@ -4,12 +4,14 @@ Base URL: https://raumzeit.hka-iwi.de
 Auth: Bearer JWT via POST /private/api/v1/authentication
 """
 
+import asyncio
 import json
 import logging
 import re
 from datetime import date as _date, datetime as _datetime
 import httpx
 from src.config import settings
+from src import db
 
 log = logging.getLogger(__name__)
 
@@ -144,6 +146,7 @@ async def get_room_timetable(room_name: str, date: str | None = None) -> dict:
     # Datum-Parameter nur für JSON-Endpoints; Text-Format wird client-seitig gefiltert
     params = {"date": date} if date else {}
     async with _client(token) as c:
+        log.debug("API → GET /timetables/room/%s  params=%s", canonical, params)
         r = await c.get(f"/api/v1/timetables/room/{canonical}", params=params)
         if r.status_code == 404:
             return {"error": f"Raum '{canonical}' nicht gefunden. Bitte prüfe den Raumnamen mit get_all_rooms."}
@@ -159,10 +162,10 @@ async def get_room_timetable(room_name: str, date: str | None = None) -> dict:
             end   = e.get("endTime")   or e.get("end", "")
             name  = e.get("name") or e.get("longName", "")
             bookings.append({"name": name, "start": start, "end": end})
+        log.debug("API ← %d  (%d Belegungen, JSON)", r.status_code, len(bookings))
     except json.JSONDecodeError:
-        # API gibt eigenes Text-Format zurück: tag#start_min#end_min#kurs_id#name
         bookings = _parse_timetable_text(r.text, date)
-        log.info("Raum '%s': Text-Format, %d Einträge (nach Datumsfilter)", canonical, len(bookings))
+        log.debug("API ← %d  (%d Belegungen, Text-Format)", r.status_code, len(bookings))
 
     return {
         "room": canonical,
@@ -171,8 +174,20 @@ async def get_room_timetable(room_name: str, date: str | None = None) -> dict:
     }
 
 
-def _parse_ical(text: str, filter_date: str | None = None) -> list[dict]:
-    """Parst iCal-Text und gibt Einträge als Liste von Dicts zurück."""
+def _current_week_range() -> tuple[str, str]:
+    """Gibt Mo–Fr der aktuellen Woche als ISO-Strings zurück."""
+    today = _date.today()
+    monday = today - __import__("datetime").timedelta(days=today.weekday())
+    friday = monday + __import__("datetime").timedelta(days=4)
+    return monday.isoformat(), friday.isoformat()
+
+
+def _parse_ical(text: str, filter_date: str | None = None,
+                date_from: str | None = None, date_to: str | None = None) -> list[dict]:
+    """Parst iCal-Text und gibt Einträge als Liste von Dicts zurück.
+    filter_date: exakter Tagesfilter
+    date_from/date_to: Datumsbereich (inklusiv)
+    """
     events = []
     current: dict = {}
     for line in text.splitlines():
@@ -184,7 +199,10 @@ def _parse_ical(text: str, filter_date: str | None = None) -> list[dict]:
         elif line.startswith("SUMMARY:"):
             current["name"] = line[8:].strip()
         elif line.startswith("DTSTART"):
-            val = line.split(":", 1)[-1].strip()
+            val = line.split(":", 1)[-1].strip().rstrip("Z")
+            # TZID-Format: "Europe/Berlin:20260410T113000" → letztes Segment nach ":"
+            if ":" in val:
+                val = val.split(":")[-1].rstrip("Z")
             try:
                 dt = _datetime.strptime(val[:15], "%Y%m%dT%H%M%S")
                 current["start"] = dt.isoformat()
@@ -192,7 +210,9 @@ def _parse_ical(text: str, filter_date: str | None = None) -> list[dict]:
             except ValueError:
                 current["start"] = val
         elif line.startswith("DTEND"):
-            val = line.split(":", 1)[-1].strip()
+            val = line.split(":", 1)[-1].strip().rstrip("Z")
+            if ":" in val:
+                val = val.split(":")[-1].rstrip("Z")
             try:
                 dt = _datetime.strptime(val[:15], "%Y%m%dT%H%M%S")
                 current["end"] = dt.isoformat()
@@ -203,33 +223,73 @@ def _parse_ical(text: str, filter_date: str | None = None) -> list[dict]:
 
     if filter_date:
         events = [e for e in events if e.get("date") == filter_date]
+    elif date_from and date_to:
+        events = [e for e in events if date_from <= e.get("date", "") <= date_to]
 
     return [{"name": e.get("name",""), "start": e.get("start",""), "end": e.get("end",""), "room": e.get("room","")} for e in events]
 
 
-async def get_course_timetable(course_semester: str, date: str | None = None) -> dict:
-    """
-    Format: 'MABB.7' (Kürzel.Semester) oder 'MABB.7.A' (mit Gruppe).
-    Nutze get_courses_of_study um das Kürzel zu ermitteln.
-    """
+async def _fetch_ical(course_semester: str, date: str | None = None,
+                      date_from: str | None = None, date_to: str | None = None) -> list[dict]:
+    """Hilfsfunktion: iCal für einen course_semester-Key abrufen und parsen."""
     token = await _get_token()
     async with _client(token) as c:
+        log.debug("API → GET /timetables/coursesemester/%s", course_semester)
         r = await c.get(
             f"/api/v1/timetables/coursesemester/{course_semester}",
             headers={"Accept": "text/calendar"},
         )
         if r.status_code == 404:
-            return {"error": f"Kurs '{course_semester}' nicht gefunden. Format: 'MABB.7' (Kürzel aus get_courses_of_study + Punkt + Semester)."}
+            return []
         r.raise_for_status()
+    bookings = _parse_ical(r.text, date, date_from=date_from, date_to=date_to)
+    log.debug("API ← %d  (%d Einträge, iCal) [%s]", r.status_code, len(bookings), course_semester)
+    return bookings
 
-    bookings = _parse_ical(r.text, date)
-    return {"course_semester": course_semester, "queried_date": date or "aktuelles Semester", "bookings": bookings}
+
+async def get_course_timetable(course_semester: str, date: str | None = None) -> dict:
+    """
+    Format: 'MABB.7' (Kürzel.Semester) oder 'MABB.7.A' (mit Gruppe).
+    Ohne Datum: aktuelle Woche (Mo–Fr). Mit Datum: nur dieser Tag.
+    Wenn der Index bekannt ist, werden alle Gruppen automatisch kombiniert.
+    """
+    parts = course_semester.split(".")
+    if len(parts) == 2:
+        variants = await db.get_course_variants(parts[0], int(parts[1]))
+        if not variants:
+            variants = [course_semester]
+    else:
+        variants = [course_semester]
+
+    # Ohne Datum → aktuelle Woche
+    if date:
+        fetch_kwargs = {"date": date}
+        label = date
+    else:
+        week_from, week_to = _current_week_range()
+        fetch_kwargs = {"date_from": week_from, "date_to": week_to}
+        label = f"KW {_date.today().isocalendar()[1]} ({week_from} – {week_to})"
+
+    results = await asyncio.gather(*[_fetch_ical(key, **fetch_kwargs) for key in variants])
+    all_bookings = []
+    for key, bookings in zip(variants, results):
+        for b in bookings:
+            b["gruppe"] = key
+        all_bookings.extend(bookings)
+
+    return {
+        "course_semester": course_semester,
+        "queried_date": label,
+        "bookings": all_bookings,
+    }
 
 
 async def get_lecturer_timetable(account: str) -> dict:
     token = await _get_token()
     async with _client(token) as c:
+        log.debug("API → GET /timetables/lecturer/%s", account)
         r = await c.get(f"/api/v1/timetables/lecturer/{account}")
+        log.debug("API ← %d  (%d bytes)", r.status_code, len(r.text))
         if r.status_code == 404:
             return {"error": f"Dozent '{account}' nicht gefunden. Bitte prüfe das Account-Kürzel."}
         r.raise_for_status()
@@ -257,6 +317,114 @@ async def get_courses_of_study(faculty: str | None = None) -> list:
         r.raise_for_status()
     # Komprimieren: nur name und longName — spart ~80% Tokens
     return [{"name": e["name"], "longName": e.get("longName", "")} for e in r.json() if isinstance(e, dict) and "name" in e]
+
+
+async def build_course_index() -> int:
+    """
+    Entdeckt alle gültigen course_semester-Kombinationen (MABB.7, MABB.7.A, ...) per API-Probing.
+    Läuft vollständig parallel, kein Rate-Limiting nötig.
+    Gibt die Anzahl gefundener Einträge zurück.
+    """
+    log.info("Kurs-Index: Aufbau gestartet...")
+    courses = await get_courses_of_study()
+    abbreviations = [c["name"] for c in courses if c.get("name")]
+    log.info("Kurs-Index: %d Studiengänge gefunden", len(abbreviations))
+
+    # Phase 1: Für alle Kürzel alle Semester 1–10 parallel prüfen
+    sem_tasks = [
+        (abbr, sem, _probe_course_key(f"{abbr}.{sem}"))
+        for abbr in abbreviations
+        for sem in range(1, 11)
+    ]
+    sem_results = await asyncio.gather(*[t for _, _, t in sem_tasks])
+
+    valid_base: list[tuple[str, int]] = []  # (abbreviation, semester)
+    for (abbr, sem, _), ok in zip(sem_tasks, sem_results):
+        if ok:
+            valid_base.append((abbr, sem))
+
+    log.info("Kurs-Index: %d gültige Semester-Kombinationen", len(valid_base))
+
+    # Phase 2: Für alle gültigen Semester Gruppen prüfen.
+    # Bekannte Einzelbuchstaben aus API-Analyse über alle Fakultäten: A,B,C,D,F,K,P,S,U,Z,E
+    # + mehrstellige Kürzel die in der Praxis vorkommen
+    _single = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    _multi = ["DF", "AB", "AF", "BF", "KP", "KU", "PU", "U1", "U2", "U61", "U62", "U63"]
+    group_suffixes = _single + _multi
+
+    grp_tasks = [
+        (abbr, sem, suffix, _probe_course_key(f"{abbr}.{sem}.{suffix}"))
+        for abbr, sem in valid_base
+        for suffix in group_suffixes
+    ]
+    grp_results = await asyncio.gather(*[t for _, _, _, t in grp_tasks])
+
+    # Ergebnisse sammeln
+    entries: list[dict] = []
+    # Basis-Keys immer aufnehmen
+    for abbr, sem in valid_base:
+        entries.append({"full_key": f"{abbr}.{sem}", "abbreviation": abbr, "semester": sem, "group_letter": ""})
+    # Gruppen-Keys nur wenn 200
+    for (abbr, sem, suffix, _), ok in zip(grp_tasks, grp_results):
+        if ok:
+            entries.append({"full_key": f"{abbr}.{sem}.{suffix}", "abbreviation": abbr, "semester": sem, "group_letter": suffix})
+
+    await db.save_course_index(entries)
+    log.info("Kurs-Index: %d Einträge gespeichert", len(entries))
+    return len(entries)
+
+
+async def fetch_course_brute_force(course_semester: str, date: str | None = None) -> dict:
+    """
+    Ignoriert den Index – probt alle bekannten Suffixe direkt für diesen Kurs.
+    Aktualisiert den Index mit neu entdeckten Varianten.
+    """
+    parts = course_semester.split(".")
+    abbr, sem = parts[0], parts[1]
+    base_key = f"{abbr}.{sem}"
+    all_suffixes = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ") + [
+        "DF", "AB", "AF", "BF", "KP", "KU", "PU", "U1", "U2", "U61", "U62", "U63"
+    ]
+    probe_results = await asyncio.gather(*[_probe_course_key(f"{base_key}.{s}") for s in all_suffixes])
+    valid_variants = [base_key] + [f"{base_key}.{s}" for s, ok in zip(all_suffixes, probe_results) if ok]
+
+    if date:
+        fetch_kwargs = {"date": date}
+    else:
+        week_from, week_to = _current_week_range()
+        fetch_kwargs = {"date_from": week_from, "date_to": week_to}
+
+    fetch_results = await asyncio.gather(*[_fetch_ical(key, **fetch_kwargs) for key in valid_variants])
+    all_bookings = []
+    for key, bookings in zip(valid_variants, fetch_results):
+        for b in bookings:
+            b["gruppe"] = key
+        all_bookings.extend(bookings)
+
+    # Index mit neu entdeckten Varianten aktualisieren
+    entries = [{"full_key": base_key, "abbreviation": abbr, "semester": int(sem), "group_letter": ""}]
+    for s, ok in zip(all_suffixes, probe_results):
+        if ok:
+            entries.append({"full_key": f"{base_key}.{s}", "abbreviation": abbr, "semester": int(sem), "group_letter": s})
+    await db.save_course_index(entries)
+    log.info("Brute-Force %s: %d Varianten, %d Einträge", base_key, len(valid_variants), len(all_bookings))
+
+    label = date or f"KW {_date.today().isocalendar()[1]}"
+    return {"course_semester": course_semester, "queried_date": label, "bookings": all_bookings}
+
+
+async def _probe_course_key(key: str) -> bool:
+    """Prüft ob ein course_semester-Key in der API existiert (200 = True, sonst False)."""
+    try:
+        token = await _get_token()
+        async with _client(token) as c:
+            r = await c.get(
+                f"/api/v1/timetables/coursesemester/{key}",
+                headers={"Accept": "text/calendar"},
+            )
+        return r.status_code == 200
+    except Exception:
+        return False
 
 
 async def get_university_calendar() -> list:
