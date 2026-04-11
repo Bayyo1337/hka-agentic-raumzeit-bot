@@ -40,6 +40,8 @@ def set_log_level(level_name: str) -> bool:
     return True
 
 set_log_level(settings.log_level)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("src.bot")
 
 # In-Memory State für Telegram
@@ -339,8 +341,12 @@ async def _run_lecturer_build():
 async def _weekly_lecturer_refresh():
     while True: await asyncio.sleep(7*24*3600); await _run_lecturer_build()
 
-async def _error_handler(u, c):
-    if not isinstance(c.error, NetworkError): log.exception("Unbehandelter Fehler", exc_info=c.error)
+async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Loggt Fehler, die während der Verarbeitung von Telegram-Updates auftreten."""
+    if isinstance(context.error, NetworkError):
+        log.warning("Telegram Netzwerkfehler: %s", context.error)
+    else:
+        log.exception("Unbehandelter Fehler in Bot-Logik", exc_info=context.error)
 
 async def _post_init(app) -> None:
     await db.init()
