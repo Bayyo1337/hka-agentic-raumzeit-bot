@@ -44,13 +44,6 @@ def make_dashboard() -> Panel:
     return Panel(table, title="[bold blue]Raumzeit Bot Dashboard[/bold blue]", border_style="blue")
 
 
-async def dashboard_task(live: Live):
-    """Aktualisiert das Dashboard jede Sekunde."""
-    while True:
-        live.update(make_dashboard())
-        await asyncio.sleep(1)
-
-
 async def terminal_loop(app, stop_event: asyncio.Event):
     """Schleife für Konsolenbefehle."""
     from src.bot import set_log_level, _run_index_build, _run_lecturer_build

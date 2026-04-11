@@ -272,10 +272,13 @@ async def main_async() -> None:
 
     await app.initialize(); await app.start(); await app.updater.start_polling()
     stop_event = asyncio.Event()
-    with terminal.Live(terminal.make_dashboard(), console=terminal.console, refresh_per_second=1) as live:
-        _live_task = asyncio.create_task(terminal.dashboard_task(live))
-        await terminal.terminal_loop(app, stop_event)
-        _live_task.cancel()
+    
+    # Dashboard einmalig beim Start anzeigen
+    terminal.console.print(terminal.make_dashboard())
+    
+    # Interaktive Konsole starten (ohne Live-Update, da input() blockiert)
+    await terminal.terminal_loop(app, stop_event)
+    
     await app.updater.stop(); await app.stop(); await app.shutdown()
 
 def main():
