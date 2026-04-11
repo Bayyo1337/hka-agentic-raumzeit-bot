@@ -75,7 +75,8 @@ def _command_help(is_admin: bool) -> str:
         "📖 *Raumzeit KI-Bot Hilfe*",
         "",
         "Du kannst mich einfach in natürlicher Sprache fragen. Hier sind einige Beispiele:",
-        "• *Räume:* \"Wann ist M-102 heute frei?\" oder \"Ist E-201 morgen belegt?\"",
+        "• *Räume:* \"Wann ist M-102 heute frei?\" oder \"Wo ist Gebäude E?\"",
+        "• *Mensa:* \"Was gibt es heute in der Mensa?\" oder \"Ist Schweinefleisch im Wahlessen 1?\"",
         "• *Kurse:* \"Stundenplan MABB Semester 7\" oder \"Was habe ich am Mittwoch?\"",
         "• *Dozenten:* \"Wo unterrichtet Peter Offermann?\"",
         "• *Kalender:* \"Wann sind die nächsten Prüfungen?\"",
@@ -118,8 +119,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "🏫 Raumzeit-Bot\n\n"
         "Stell mir einfach eine Frage auf Deutsch, z.B.:\n"
         "  • Wann ist Raum M-001 heute frei?\n"
-        "  • Zeig mir den Stundenplan von MABB Semester 7\n"
-        "  • Wann hat Dozent muster Zeit?\n\n"
+        "  • Was gibt es heute in der Mensa?\n"
+        "  • Wo ist das Gebäude LI?\n"
+        "  • Zeig mir den Stundenplan von MABB Semester 7\n\n"
         + _command_help(is_admin)
     )
     msg = await update.message.reply_text(text)
@@ -298,12 +300,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         await db.save_history(chat_id, history)
         await db.add_tokens(user_id, tok_in, tok_out)
-        if CONFIRM_SENTINEL in reply:
-            course = next((r.get("course_semester", "") for n, r in collected_results if n == "get_course_timetable"), "")
-            queried_date = next((r.get("queried_date") for n, r in collected_results if n == "get_course_timetable"), None)
-            raw_date = queried_date if (queried_date and len(queried_date) == 10) else None
-            _pending_confirmation[chat_id] = (text, course, 1, raw_date)
-        await _send_reply(update, chat_id, reply)
+        
+        # Sonderaktionen prüfen (z.B. Lageplan senden)
+        map_sent = False
+        for name, res in collected_results:
+            if name == "get_campus_map" and res.get("action") == "send_map":
+                building = res.get("building")
+                map_path = f"data/maps/map_{building}.png"
+                import os
+                if os.path.exists(map_path):
+                    await context.bot.send_photo(chat_id=chat_id, photo=open(map_path, "rb"), caption=reply, parse_mode="Markdown")
+                    map_sent = True
+                    break
+        
+        if not map_sent:
+            if CONFIRM_SENTINEL in reply:
+                course = next((r.get("course_semester", "") for n, r in collected_results if n == "get_course_timetable"), "")
+                queried_date = next((r.get("queried_date") for n, r in collected_results if n == "get_course_timetable"), None)
+                raw_date = queried_date if (queried_date and len(queried_date) == 10) else None
+                _pending_confirmation[chat_id] = (text, course, 1, raw_date)
+            await _send_reply(update, chat_id, reply)
     except Exception as exc:
         log.exception("Agent-Fehler"); await update.message.reply_text(f"⚠️ Fehler: {exc}")
 

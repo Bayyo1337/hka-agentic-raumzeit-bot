@@ -46,6 +46,9 @@ Verfügbare Tools:
 - get_departments: keine Parameter
 - get_courses_of_study: faculty_id (optional)
 - get_university_calendar: keine Parameter
+- get_mensa_menu: date (YYYY-MM-DD, optional)
+- get_mensa_meal_details: meal (Gerichtsname oder ID), date (YYYY-MM-DD, optional)
+- get_campus_map: room_or_building (z.B. "LI-145" oder "Gebäude M") - NUTZE DIES NUR BEI FRAGEN NACH DEM ORT/STOCKWERK!
 
 Regeln:
 - Konkreter Tag genannt ("Montag", "nächste Woche Dienstag", "heute", "morgen"): GENAU 1 Call mit diesem date

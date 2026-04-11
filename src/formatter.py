@@ -81,6 +81,75 @@ def _free_slots(bookings: list[dict], day_start: str = "08:00", day_end: str = "
 
 # ── Einzelne Formatter ───────────────────────────────────────────────────────
 
+def _render_timeline(bookings: list[dict], day_label: str = "", header_prefix: str = "") -> list[str]:
+    """Erzeugt eine chronologische Timeline (🟢/🔴) für eine Liste von Belegungen."""
+    lines = []
+    if header_prefix:
+        lines.append(f"{header_prefix}" + (f" – {day_label}" if day_label else ""))
+    elif day_label:
+        lines.append(f"\n*{day_label}:*")
+
+    current_time = _time_to_minutes("08:00")
+    end_of_day = _time_to_minutes("20:00")
+    
+    # Sortieren und Deduplizieren
+    sorted_bookings = sorted(_dedup_bookings(bookings), key=lambda b: _time_to_minutes(_to_hhmm(b.get("start", ""))))
+
+    if not sorted_bookings:
+        # Wochenende prüfen für spezifische Meldung
+        if day_label:
+            if "Sa" in day_label or "Samstag" in day_label:
+                lines.append("Am Samstag finden keine Vorlesungen statt.")
+            elif "So" in day_label or "Sonntag" in day_label:
+                lines.append("Am Sonntag finden keine Vorlesungen statt.")
+            else:
+                lines.append("Keine Belegungen gefunden (möglicherweise frei).")
+        else:
+            lines.append("Keine Belegungen gefunden.")
+        return lines
+
+    for b in sorted_bookings:
+        start_min = _time_to_minutes(_to_hhmm(b.get("start", "")))
+        end_min = _time_to_minutes(_to_hhmm(b.get("end", "")))
+
+        # Freien Slot einfügen
+        if start_min > current_time:
+            lines.append(f"🟢 {_minutes_to_hhmm(current_time)}–{_minutes_to_hhmm(start_min)} frei")
+        
+        # Belegung anzeigen
+        course_code = b.get("name", "")
+        module = b.get("module", "")
+        lecturer = b.get("lecturer", "")
+        room = b.get("room", "")
+        cancelled = b.get("cancelled", False)
+        
+        # Keywords im Namen prüfen
+        name_lower = f"{course_code} {module}".lower()
+        if "fällt aus" in name_lower or "entfällt" in name_lower or "canceled" in name_lower:
+            cancelled = True
+        
+        label = f"*{course_code}*"
+        if module and module != course_code:
+            label += f" {module}"
+        if lecturer:
+            label += f" ({lecturer})"
+        if room and not header_prefix.startswith("🏫"):
+            label += f" 🏫 {room}"
+            
+        time_range = f"{_to_hhmm(b.get('start', ''))}–{_to_hhmm(b.get('end', ''))}"
+        if cancelled:
+            lines.append(f"❌ ~{time_range} {label}~ (FÄLLT AUS)")
+        else:
+            lines.append(f"🔴 {time_range} {label}")
+            
+        current_time = max(current_time, end_min)
+    
+    if current_time < end_of_day:
+        lines.append(f"🟢 {_minutes_to_hhmm(current_time)}–{_minutes_to_hhmm(end_of_day)} frei")
+        
+    return lines
+
+
 def _fmt_room(result: dict) -> str:
     room = result.get("room", "?")
     queried_date = result.get("queried_date", "")
@@ -89,12 +158,9 @@ def _fmt_room(result: dict) -> str:
     if "error" in result:
         return f"❌ {result['error']}"
 
-    date_label = _fmt_date(queried_date) if queried_date and queried_date != "aktuelle Woche" else queried_date
-    lines = [f"🏫 *{room}*" + (f" – {date_label}" if date_label else "")]
-
-    if not bookings:
-        lines.append("✅ Keine Belegungen gefunden (möglicherweise frei)")
-        return "\n".join(lines)
+    if not bookings and not result.get("note"):
+        date_label = _fmt_date(queried_date) if queried_date and queried_date != "aktuelle Woche" else queried_date
+        return f"🏫 *{room}*" + (f" – {date_label}" if date_label else "") + "\n✅ Keine Belegungen gefunden (möglicherweise frei)"
 
     # Gruppiere nach Tag
     from collections import defaultdict
@@ -105,43 +171,21 @@ def _fmt_room(result: dict) -> str:
     _day_order = {d: i for i, d in enumerate(_WEEKDAY_DE)}
     sorted_days = sorted(by_day.keys(), key=lambda d: _day_order.get(d, 99))
 
-    for day in sorted_days:
-        day_bookings = sorted(_dedup_bookings(by_day[day]), key=lambda b: _time_to_minutes(_to_hhmm(b.get("start", ""))))
-        if len(sorted_days) > 1:
-            lines.append(f"\n*{day}:*")
-        
-        current_time = _time_to_minutes("08:00")
-        end_of_day = _time_to_minutes("20:00")
+    all_lines = []
+    # Bei leerem Ergebnis mit Note (z.B. API-Problem an Freitagen)
+    if not sorted_days and result.get("note"):
+        date_label = _fmt_date(queried_date) if queried_date and queried_date != "aktuelle Woche" else queried_date
+        return f"🏫 *{room}*" + (f" – {date_label}" if date_label else "") + f"\n✅ Keine Belegungen gefunden.\n_{result['note']}_"
 
-        for b in day_bookings:
-            start_min = _time_to_minutes(_to_hhmm(b.get("start", "")))
-            end_min = _time_to_minutes(_to_hhmm(b.get("end", "")))
+    for i, day in enumerate(sorted_days):
+        date_label = _fmt_date(queried_date) if len(sorted_days) == 1 and queried_date and queried_date != "aktuelle Woche" else day
+        if len(sorted_days) == 1:
+            all_lines.extend(_render_timeline(by_day[day], date_label, f"🏫 *{room}*"))
+        else:
+            if i == 0: all_lines.append(f"🏫 *{room}* (Wochenübersicht)")
+            all_lines.extend(_render_timeline(by_day[day], day))
 
-            # Freien Slot einfügen, wenn eine Lücke zur aktuellen Zeit besteht
-            if start_min > current_time:
-                lines.append(f"🟢 {_minutes_to_hhmm(current_time)}–{_minutes_to_hhmm(start_min)} frei")
-            
-            # Belegung anzeigen
-            course_code = b.get("name", "")
-            module = b.get("module", "")
-            lecturer = b.get("lecturer", "")
-            
-            label = f"*{course_code}*"
-            if module and module != course_code:
-                label += f" {module}"
-            if lecturer:
-                label += f" ({lecturer})"
-            
-            lines.append(f"🔴 {_to_hhmm(b.get('start', ''))}–{_to_hhmm(b.get('end', ''))} {label}")
-            
-            # Cursor auf das Ende der aktuellen Belegung setzen (max, falls Belegungen überlappen)
-            current_time = max(current_time, end_min)
-        
-        # Letzten freien Slot bis zum Tagesende einfügen
-        if current_time < end_of_day:
-            lines.append(f"🟢 {_minutes_to_hhmm(current_time)}–{_minutes_to_hhmm(end_of_day)} frei")
-
-    return "\n".join(lines)
+    return "\n".join(all_lines)
 
 
 def _fmt_room_multi(results: list[dict]) -> str:
@@ -202,19 +246,106 @@ def _fmt_lecturer(result: dict) -> str:
     bookings = result.get("bookings", [])
     queried_date = result.get("queried_date", "")
 
-    date_label = _fmt_date(queried_date) if queried_date and queried_date != "heute" else queried_date
-    lines = [f"👤 *Stundenplan {lecturer}*" + (f" – {date_label}" if date_label else "")]
     if not bookings:
-        lines.append("Keine Einträge für heute gefunden. An welchem Tag suchst du?")
-        return "\n".join(lines)
+        date_label = _fmt_date(queried_date) if queried_date and queried_date != "heute" else queried_date
+        return f"👤 *Stundenplan {lecturer}*" + (f" – {date_label}" if date_label else "") + "\nKeine Einträge für heute gefunden. An welchem Tag suchst du?"
 
-    for b in sorted(_dedup_bookings(bookings), key=lambda b: b.get("start", "")):
-        start = _to_hhmm(b.get("start", ""))
-        end = _to_hhmm(b.get("end", ""))
-        name = b.get("name", "")
-        lines.append(f"🔴 {start}–{end} {name}")
+    # Gruppiere nach Tag → Raum
+    from collections import defaultdict
+    by_day_room: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+    for b in bookings:
+        d_name = b.get("day")
+        if not d_name and b.get("date"):
+            try:
+                dt = _date.fromisoformat(b["date"])
+                d_name = _WEEKDAY_DE[dt.weekday()]
+            except: pass
+        d_name = d_name or "Termine"
+        room = b.get("room") or "Unbekannter Raum"
+        by_day_room[d_name][room].append(b)
 
+    _day_order = {d: i for i, d in enumerate(_WEEKDAY_DE)}
+    sorted_days = sorted(by_day_room.keys(), key=lambda d: _day_order.get(d, 99))
+
+    all_lines = []
+    total_days = len(sorted_days)
+    
+    for day in sorted_days:
+        rooms_on_day = by_day_room[day]
+        for room in sorted(rooms_on_day.keys()):
+            date_label = _fmt_date(queried_date) if total_days == 1 and queried_date and queried_date != "heute" else day
+            # WICHTIG: _dedup_bookings hier aufrufen
+            deduplicated = _dedup_bookings(rooms_on_day[room])
+            all_lines.extend(_render_timeline(deduplicated, date_label, f"🏫 *{room}*"))
+            all_lines.append("") # Leerzeile zwischen Räumen/Tagen
+
+    return "\n".join(all_lines).strip()
+
+
+def _fmt_mensa(result: dict) -> str:
+    if "error" in result:
+        return f"❌ {result['error']}"
+    
+    date_str = _fmt_date(result.get("date", ""))
+    if result.get("closed"):
+        return f"🍴 *Mensa Moltke* – {date_str}\nDie Mensa ist an diesem Tag geschlossen."
+    
+    meals = result.get("meals", [])
+    if not meals:
+        return f"🍴 *Mensa Moltke* – {date_str}\nKein Speiseplan verfügbar."
+    
+    lines = [f"🍴 *Mensa Moltke* – {date_str}", ""]
+    from collections import defaultdict
+    by_cat = defaultdict(list)
+    for m in meals:
+        by_cat[m.get("category", "Diverses")].append(m)
+    
+    for cat in sorted(by_cat.keys()):
+        lines.append(f"*{cat}:*")
+        for m in by_cat[cat]:
+            name = m.get("name", "Unbekannt")
+            prices = m.get("prices", {})
+            p_stud = f"{prices.get('students'):.2f}€" if prices.get("students") else ""
+            lines.append(f"  • {name}" + (f" ({p_stud})" if p_stud else ""))
+        lines.append("")
+        
+    lines.append("_Details zu Inhaltsstoffen mit: 'Was ist im [Gericht] drin?'_")
     return "\n".join(lines)
+
+
+def _fmt_mensa_details(result: dict) -> str:
+    if "error" in result:
+        return f"❌ {result['error']}"
+    
+    name = result.get("name", "Unbekanntes Gericht")
+    notes = result.get("notes", [])
+    prices = result.get("prices", {})
+    
+    lines = [f"🍕 *{name}*", ""]
+    if prices:
+        p_list = []
+        if prices.get("students"): p_list.append(f"Studierende: {prices['students']:.2f}€")
+        if prices.get("employees"): p_list.append(f"Bedienstete: {prices['employees']:.2f}€")
+        if p_list:
+            lines.append("💰 *Preise:*")
+            lines.extend([f"  • {p}" for p in p_list])
+            lines.append("")
+            
+    if notes:
+        lines.append("📝 *Inhaltsstoffe & Hinweise:*")
+        lines.extend([f"  • {n}" for n in notes])
+    else:
+        lines.append("Keine Detail-Informationen verfügbar.")
+        
+    return "\n".join(lines)
+
+
+def _fmt_map(result: dict) -> str:
+    building = result.get("building", "?")
+    floor = result.get("floor", "unbekanntes Stockwerk")
+    query = result.get("query", building)
+    
+    return f"📍 *Lageplan für {query}*\n\nDas Gebäude *{building}* befindet sich auf dem Hauptcampus.\nEbene: *{floor}*"
 
 
 def _fmt_list(result) -> str:
@@ -276,6 +407,9 @@ _FORMATTERS = {
     "get_course_timetable":    _fmt_course,
     "get_lecturer_timetable":  _fmt_lecturer,
     "get_university_calendar": _fmt_calendar,
+    "get_mensa_menu":          _fmt_mensa,
+    "get_mensa_meal_details":  _fmt_mensa_details,
+    "get_campus_map":          _fmt_map,
     "get_departments":         _fmt_list,
     "get_courses_of_study":    _fmt_list,
     "get_all_rooms":           _fmt_list,
