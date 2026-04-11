@@ -50,43 +50,66 @@ _NEIN = {"nein", "ne", "n", "no", "falsch", "stimmt nicht", "stimmt nicht so", "
 _JA   = {"ja", "j", "yes", "y", "stimmt", "korrekt", "ok", "okay"}
 
 _USER_COMMANDS = [
-    BotCommand("start", "Hilfe & Übersicht"),
-    BotCommand("setcourse", "Eigener Stundenplan festlegen"),
-    BotCommand("stats", "Deine Nutzungsstatistik"),
+    BotCommand("start", "Einführung & Kurzhilfe"),
+    BotCommand("help", "Ausführliche Hilfe & Beispiele"),
+    BotCommand("setcourse", "Eigener Studiengang hinterlegen"),
+    BotCommand("stats", "Nutzungsstatistik & Profil"),
     BotCommand("reset", "Gesprächsverlauf löschen"),
 ]
 
 _ADMIN_COMMANDS = _USER_COMMANDS + [
-    BotCommand("admin", "Nutzer- & System-Übersicht"),
-    BotCommand("rooms", "Alle Räume auflisten"),
-    BotCommand("sync", "Kurs-Index neu aufbauen"),
-    BotCommand("ping", "API-Erreichbarkeit prüfen"),
-    BotCommand("indexage", "Alter des Kurs-Index"),
-    BotCommand("courses", "Kurs-Index für ein Kürzel"),
-    BotCommand("feedback", "Feedback-Logs auflisten"),
-    BotCommand("user", "Detailansicht eines Nutzers"),
-    BotCommand("ban", "Nutzer sperren"),
-    BotCommand("unban", "Nutzer entsperren"),
-    BotCommand("resetlimit", "Rate-Limit-Zähler zurücksetzen"),
-    BotCommand("cleartokens", "Token-Zähler zurücksetzen"),
-    BotCommand("clearhistory", "Gesprächsverlauf eines Nutzers löschen"),
-    BotCommand("broadcast", "Nachricht an alle Nutzer senden"),
-    BotCommand("setprovider", "LLM-Provider wechseln"),
-    BotCommand("loglevel", "Log-Level ändern (info|debug|warning)"),
-    BotCommand("togglepersonal", "Personalisierung (/setcourse) an/aus"),
-    BotCommand("maintenance", "Wartungsmodus ein-/ausschalten"),
+    BotCommand("admin", "System- & Nutzerübersicht"),
+    BotCommand("sync", "Datenbank-Abgleich mit HKA"),
+    BotCommand("togglepersonal", "Feature: Personalisierung an/aus"),
+    BotCommand("loglevel", "Logging-Detailtiefe ändern"),
+    BotCommand("maintenance", "Wartungsmodus steuern"),
+    BotCommand("broadcast", "Nachricht an alle Nutzer"),
 ]
 
 def _is_allowed(user_id: int) -> bool:
     return not settings.allowed_ids or user_id in settings.allowed_ids
 
 def _command_help(is_admin: bool) -> str:
-    lines = ["📋 Befehle:", "/start – Hilfe", "/stats – Statistik", "/reset – Verlauf löschen"]
+    from src.state import _personal_features
+    lines = [
+        "📖 *Raumzeit KI-Bot Hilfe*",
+        "",
+        "Du kannst mich einfach in natürlicher Sprache fragen. Hier sind einige Beispiele:",
+        "• *Räume:* \"Wann ist M-102 heute frei?\" oder \"Ist E-201 morgen belegt?\"",
+        "• *Kurse:* \"Stundenplan MABB Semester 7\" oder \"Was habe ich am Mittwoch?\"",
+        "• *Dozenten:* \"Wo unterrichtet Peter Offermann?\"",
+        "• *Kalender:* \"Wann sind die nächsten Prüfungen?\"",
+        "",
+    ]
     if _personal_features[0]:
-        lines.insert(2, "/setcourse – Eigener Studiengang")
+        lines.append("💡 *Tipp:* Nutze `/setcourse`, um deine Semester zu speichern. Dann weiß ich bei Fragen wie \"Was habe ich heute?\" automatisch, welcher Plan gemeint ist.\n")
+    
+    lines += [
+        "📜 *Befehle:*",
+        "/help – Diese ausführliche Hilfe",
+        "/stats – Deine Tokens, Limits und gespeicherten Kurse",
+        "/reset – Löscht den aktuellen Gesprächskontext",
+    ]
+    if _personal_features[0]:
+        lines.insert(-2, "/setcourse – Geführte Auswahl deines Studiengangs")
+
     if is_admin:
-        lines += ["", "🔧 Admin:", "/admin, /rooms, /sync, /ping, /indexage, /user, /ban, /loglevel, /maintenance"]
+        lines += [
+            "",
+            "🔧 *Admin-Befehle:*",
+            "/admin – Volle System-Übersicht",
+            "/sync – Kurs- und Dozenten-Daten neu laden",
+            "/togglepersonal – /setcourse Feature an/aus",
+            "/loglevel <level> – Debug-Modus steuern",
+            "/broadcast <text> – Nachricht an alle senden",
+        ]
     return "\n".join(lines)
+
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    is_admin = admin._is_admin(update.effective_user.id)
+    await update.message.reply_text(_command_help(is_admin), parse_mode="Markdown")
+
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -317,6 +340,7 @@ async def _post_init(app) -> None:
 async def main_async() -> None:
     app = ApplicationBuilder().token(settings.telegram_bot_token).post_init(_post_init).build()
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("setcourse", cmd_setcourse))
     app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CommandHandler("stats", cmd_stats))
