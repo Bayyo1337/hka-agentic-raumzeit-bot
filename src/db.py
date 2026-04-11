@@ -54,6 +54,12 @@ async def init() -> None:
                 custom_rate_limit INTEGER NOT NULL DEFAULT -1,
                 last_seen         TEXT NOT NULL DEFAULT ''
             );
+
+            CREATE TABLE IF NOT EXISTS test_cases (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                query_text TEXT UNIQUE,
+                created_at TEXT NOT NULL
+            );
         """)
         await db.commit()
     log.info("Datenbank initialisiert: %s", DB_PATH)
@@ -396,3 +402,28 @@ def delete_feedback_log(filename: str) -> bool:
         os.remove(path)
         return True
     return False
+
+
+# ── Stresstest / Regressionstests ────────────────────────────────────────────
+
+async def save_test_case(query: str) -> bool:
+    """Speichert eine Test-Anfrage, falls sie noch nicht existiert."""
+    now = datetime.now().isoformat()
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "INSERT INTO test_cases (query_text, created_at) VALUES (?, ?)",
+                (query, now)
+            )
+            await db.commit()
+        return True
+    except aiosqlite.IntegrityError:
+        return False # Duplikat
+
+
+async def get_all_test_cases() -> list[str]:
+    """Gibt alle gespeicherten Test-Anfragen zurück."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT query_text FROM test_cases ORDER BY id DESC") as cur:
+            rows = await cur.fetchall()
+            return [r[0] for r in rows]
