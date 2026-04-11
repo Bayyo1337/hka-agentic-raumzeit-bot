@@ -7,9 +7,9 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 
-from telegram import Update, BotCommand
+from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import NetworkError
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
 
 from src.config import settings
 from src import agent
@@ -114,6 +114,7 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
+    u = await db.get_user(user_id)
     limit = settings.rate_limit_per_hour
     recent = await db.get_recent_count(user_id)
     total = await db.get_total_count(user_id)
@@ -121,18 +122,69 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     history = await db.load_history(update.effective_chat.id)
     history_len = len(history) // 2
     remaining = (limit - recent) if limit > 0 else "∞"
-    reset_info = ""
-    if limit and recent >= limit:
-        oldest = await db.get_oldest_recent_ts(user_id)
-        if oldest:
-            reset_at = oldest + timedelta(hours=1)
-            mins = max(0, int((reset_at - datetime.now()).total_seconds() / 60))
-            reset_info = f"\nLimit-Reset in: ~{mins} min"
+    course_str = f"\nKurs: {u['primary_course']}" if u and u.get("primary_course") else ""
+    
     await update.message.reply_text(
-        f"📊 Deine Statistik\nAnfragen letzte Stunde: {recent}/{limit if limit else '∞'}\n"
-        f"Noch verfügbar: {remaining}{reset_info}\nGesamt: {total} Anfragen\n"
+        f"📊 Deine Statistik{course_str}\n"
+        f"Anfragen letzte Stunde: {recent}/{limit if limit else '∞'}\n"
+        f"Noch verfügbar: {remaining}\nGesamt: {total} Anfragen\n"
         f"Tokens: {tok_in + tok_out:,}\nGesprächsverlauf: {history_len} Austausch(e)"
     )
+
+
+async def cmd_setcourse(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Interaktiver Assistent zum Festlegen des eigenen Studiengangs."""
+    try:
+        faculties = await raumzeit.get_departments()
+        keyboard = []
+        for f in faculties:
+            name = f.get("name") or f.get("shortName", "Unknown")
+            keyboard.append([InlineKeyboardButton(name, callback_data=f"setc_fac:{f['id']}")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("Wähle deine Fakultät:", reply_markup=reply_markup)
+    except Exception as e:
+        log.exception("Fehler in cmd_setcourse")
+        await update.message.reply_text(f"⚠️ Fehler beim Laden der Fakultäten: {e}")
+
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Verarbeitet die Klicks auf die Inline-Buttons des setcourse-Assistenten."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data.startswith("setc_fac:"):
+        fac_id = data.split(":")[1]
+        try:
+            courses = await raumzeit.get_courses_of_study(fac_id)
+            keyboard = []
+            for c in courses:
+                name = c.get("name") or c.get("shortName", "Unknown")
+                keyboard.append([InlineKeyboardButton(name, callback_data=f"setc_deg:{c['name']}")])
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text("Wähle deinen Studiengang:", reply_markup=reply_markup)
+        except Exception as e:
+            await query.edit_message_text(f"⚠️ Fehler: {e}")
+
+    elif data.startswith("setc_deg:"):
+        deg_abbr = data.split(":")[1]
+        keyboard = []
+        for i in range(1, 8, 2):
+            row = [InlineKeyboardButton(f"Sem. {i}", callback_data=f"setc_fin:{deg_abbr}.{i}")]
+            if i + 1 <= 7:
+                row.append(InlineKeyboardButton(f"Sem. {i+1}", callback_data=f"setc_fin:{deg_abbr}.{i+1}"))
+            keyboard.append(row)
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(f"Welches Semester ({deg_abbr})?", reply_markup=reply_markup)
+
+    elif data.startswith("setc_fin:"):
+        full_key = data.split(":")[1]
+        await db.set_primary_course(update.effective_user.id, full_key)
+        await query.edit_message_text(f"✅ Dein Stundenplan wurde auf *{full_key}* gesetzt.", parse_mode="Markdown")
+
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
@@ -200,9 +252,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_label = f"@{user.username}" if user.username else str(user_id)
     log.debug("Anfrage von %s (chat=%d): %.80s", user_label, chat_id, text)
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+    
+    # Nutzer-Profil laden (für persönlichen Stundenplan)
+    u = await db.get_user(user_id)
+    primary_course = u.get("primary_course") if u else None
+
     history = await db.load_history(chat_id)
     try:
-        reply, tok_in, tok_out, collected_results = await agent.run(text, history, user_label=user_label)
+        reply, tok_in, tok_out, collected_results = await agent.run(
+            text, history, user_label=user_label, primary_course=primary_course
+        )
         await db.save_history(chat_id, history)
         await db.add_tokens(user_id, tok_in, tok_out)
         if CONFIRM_SENTINEL in reply:
@@ -269,6 +328,7 @@ async def main_async() -> None:
     app.add_handler(CommandHandler("setprovider", admin.cmd_setprovider))
     app.add_handler(CommandHandler("loglevel", admin.cmd_loglevel))
     app.add_handler(CommandHandler("maintenance", admin.cmd_maintenance))
+    app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(_error_handler)
 
