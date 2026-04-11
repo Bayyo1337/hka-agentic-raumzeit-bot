@@ -19,7 +19,7 @@ from src import formatter
 from src import admin
 from src import terminal
 from src.formatter import CONFIRM_SENTINEL
-from src.state import _maintenance
+from src.state import _maintenance, _personal_features
 
 # Logging Setup
 from rich.logging import RichHandler
@@ -73,6 +73,7 @@ _ADMIN_COMMANDS = _USER_COMMANDS + [
     BotCommand("broadcast", "Nachricht an alle Nutzer senden"),
     BotCommand("setprovider", "LLM-Provider wechseln"),
     BotCommand("loglevel", "Log-Level ändern (info|debug|warning)"),
+    BotCommand("togglepersonal", "Personalisierung (/setcourse) an/aus"),
     BotCommand("maintenance", "Wartungsmodus ein-/ausschalten"),
 ]
 
@@ -81,6 +82,8 @@ def _is_allowed(user_id: int) -> bool:
 
 def _command_help(is_admin: bool) -> str:
     lines = ["📋 Befehle:", "/start – Hilfe", "/stats – Statistik", "/reset – Verlauf löschen"]
+    if _personal_features[0]:
+        lines.insert(2, "/setcourse – Eigener Studiengang")
     if is_admin:
         lines += ["", "🔧 Admin:", "/admin, /rooms, /sync, /ping, /indexage, /user, /ban, /loglevel, /maintenance"]
     return "\n".join(lines)
@@ -134,6 +137,9 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_setcourse(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Interaktiver Assistent zum Festlegen des eigenen Studiengangs."""
+    if not _personal_features[0]:
+        await update.message.reply_text("💡 Dieses Feature ist aktuell deaktiviert.")
+        return
     try:
         faculties = await raumzeit.get_departments()
         keyboard = []
@@ -152,6 +158,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """Verarbeitet die Klicks auf die Inline-Buttons des setcourse-Assistenten."""
     query = update.callback_query
     await query.answer()
+    
+    if not _personal_features[0]:
+        await query.edit_message_text("💡 Dieses Feature wurde deaktiviert.")
+        return
+
     data = query.data
 
     if data.startswith("setc_fac:"):
@@ -327,6 +338,7 @@ async def main_async() -> None:
     app.add_handler(CommandHandler("broadcast", admin.cmd_broadcast))
     app.add_handler(CommandHandler("setprovider", admin.cmd_setprovider))
     app.add_handler(CommandHandler("loglevel", admin.cmd_loglevel))
+    app.add_handler(CommandHandler("togglepersonal", admin.cmd_togglepersonal))
     app.add_handler(CommandHandler("maintenance", admin.cmd_maintenance))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

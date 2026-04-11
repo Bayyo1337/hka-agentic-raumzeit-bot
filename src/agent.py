@@ -39,17 +39,29 @@ _EXTRACTION_PROMPT_BASE = """Du bist ein Intent-Parser für das Raumzeit-Buchung
 Analysiere die Nutzernachricht und gib ausschließlich valides JSON zurück. Kein Text, keine Erklärung.
 
 Verfügbare Tools:
-- get_room_timetable: room_name (z.B. "M-001"), date (YYYY-MM-DD, optional)
+- get_room_timetable: room_name (z.B. "M-102"), date (YYYY-MM-DD, optional)
 - get_course_timetable: course_key ("KÜRZEL.SEMESTER", z.B. "MABB.6"), date (YYYY-MM-DD, optional)
 - get_lecturer_timetable: account (vollständiger Name z.B. "Masha Taheran", Nachname z.B. "Taheran", oder Kürzel z.B. "tama0001"), date (YYYY-MM-DD, optional)
 - get_all_rooms: keine Parameter
+- get_departments: keine Parameter
+- get_courses_of_study: faculty_id (optional)
+- get_university_calendar: keine Parameter
 
 Regeln:
-- Wochenende → {"weekend": true}
 - Konkreter Tag genannt ("Montag", "nächste Woche Dienstag", "heute", "morgen"): GENAU 1 Call mit diesem date
 - Ganze Woche ("diese Woche", "nächste Woche" ohne Tagangabe): 5 Calls für Mo–Fr mit je einem date
 - Kein Datum ("zeig Stundenplan"): date weglassen
 - Max. 6 Calls gesamt
+
+Regeln zur Zeitrechnung:
+- "nächste Woche" ohne Tag → alle 5 Tage (Mo–Fr) der nächsten Kalenderwoche.
+- "die nächsten Tage" / "diese Woche" → alle verbleibenden Tage der aktuellen Woche (inkl. Wochenende).
+- "und sonst?" / "was noch?" → restliche Termine der aktuellen Woche.
+- Datum am Wochenende (Sa/So) → Normaler Call mit diesem date (API liefert auch Blockveranstaltungen).
+- Datum in der Vergangenheit → meist Tippfehler, prüfe ob der gleiche Tag im nächsten Monat/Jahr gemeint sein könnte.
+
+Fehler-Handling:
+- Wenn der Nutzer nach SEINEM persönlichen Plan fragt ("mein Plan", "was habe ich morgen"), aber im 'Nutzer-Profil' unten steht 'Kein Kurs hinterlegt', darfst du keinen Kurs raten! Gib in diesem Fall exakt {"error": "no_course"} zurück.
 
 Kürzel-Beispiele: MABB=Maschinenbau, INFB=Informatik, IWIB=Wirtschaftsinformatik, EIMB=Elektro/IT
 
@@ -57,8 +69,9 @@ Ausgabeformat:
 {"calls": [{"tool": "TOOLNAME", "args": {"param": "wert"}}, ...]}"""
 
 
-def _extraction_prompt() -> str:
-    return f"{_EXTRACTION_PROMPT_BASE}\n\nHeutiges Datum: {date.today().isoformat()}"
+def _extraction_prompt(primary_course: str | None = None) -> str:
+    profile_info = f"\nNutzer-Profil: Der Nutzer studiert '{primary_course}'." if primary_course else "\nNutzer-Profil: Kein Kurs hinterlegt."
+    return f"{_EXTRACTION_PROMPT_BASE}\n\nHeutiges Datum: {date.today().isoformat()}{profile_info}"
 
 
 def _resolve_model() -> str:
@@ -106,22 +119,13 @@ MAX_HISTORY_EXCHANGES = 3  # nur die letzten N Frage+Antwort-Paare behalten
 MAX_TOOL_CALLS = 6        # Sicherheitslimit: nie mehr als N API-Calls pro Anfrage
 
 
-async def run(user_message: str, history: list[dict], user_label: str = "") -> tuple[str, int, int, list]:
+async def run(user_message: str, history: list[dict], user_label: str = "", primary_course: str | None = None) -> tuple[str, int, int, list]:
     """
     Extraktion: Nutzernachricht → JSON → parallele API-Calls → Formatter → Antwort.
 
     Returns:
         (reply, input_tokens, output_tokens, collected_results)
     """
-    # Wochenend-Schnellcheck: "morgen" auf Sa/So → direkt antworten
-    tomorrow = date.today().toordinal() + 1
-    tomorrow_weekday = date.fromordinal(tomorrow).weekday()  # 5=Sa, 6=So
-    if tomorrow_weekday >= 5 and "morgen" in user_message.lower():
-        reply = "Am Wochenende finden keine Vorlesungen statt."
-        history.append({"role": "user", "content": user_message})
-        history.append({"role": "assistant", "content": reply})
-        return reply, 0, 0, []
-
     # History kürzen: lange Antworten (z.B. Raumlisten) kosten viele Tokens
     # und sind für das Intent-Parsing meist irrelevant.
     processed_history = []
@@ -133,7 +137,7 @@ async def run(user_message: str, history: list[dict], user_label: str = "") -> t
 
     model = _resolve_model()
     messages = (
-        [{"role": "system", "content": _extraction_prompt()}]
+        [{"role": "system", "content": _extraction_prompt(primary_course)}]
         + processed_history
         + [{"role": "user", "content": user_message}]
     )
@@ -172,8 +176,8 @@ async def run(user_message: str, history: list[dict], user_label: str = "") -> t
         history.append({"role": "assistant", "content": reply})
         return reply, total_input_tokens, total_output_tokens, []
 
-    if parsed.get("weekend"):
-        reply = "Am Wochenende finden keine Vorlesungen statt."
+    if parsed.get("error") == "no_course":
+        reply = "Bitte nutze /setcourse, um deinen Studiengang zu hinterlegen, damit ich dir deinen persönlichen Plan zeigen kann."
         history.append({"role": "user", "content": user_message})
         history.append({"role": "assistant", "content": reply})
         return reply, total_input_tokens, total_output_tokens, []

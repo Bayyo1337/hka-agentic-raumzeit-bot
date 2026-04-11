@@ -7,3 +7,6 @@ _BOT_START = datetime.now()
 
 # Wartungsmodus: (aktiv, Nachricht)
 _maintenance: list = [False, "🔧 Der Bot wird gerade gewartet. Bitte versuche es später."]
+
+# Persönliche Features (Stundenplan-Hinterlegung) an/aus
+_personal_features: list = [False]
