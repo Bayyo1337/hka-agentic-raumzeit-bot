@@ -73,8 +73,17 @@ async def terminal_loop(app, stop_event: asyncio.Event):
                 else:
                     console.print("[yellow]Verwendung:[/yellow] loglevel <debug|info|warning|error>")
             elif cmd == "sync":
-                asyncio.create_task(_run_index_build())
-                asyncio.create_task(_run_lecturer_build())
+                console.print("[yellow]Starte vollständigen Index-Neuaufbau...[/yellow]")
+                async def _run_sync():
+                    try:
+                        c_count = await raumzeit.build_course_index()
+                        l_count = await raumzeit.build_lecturer_index()
+                        console.print(f"\n[bold green]✅ Sync abgeschlossen![/bold green]")
+                        console.print(f"  - Kurs-Index: {c_count} Einträge")
+                        console.print(f"  - Dozenten-Index: {l_count} Matches\n")
+                    except Exception as e:
+                        console.print(f"[red]Fehler beim Sync: {e}[/red]")
+                asyncio.create_task(_run_sync())
             elif cmd == "test":
                 await _handle_test_cmd(args)
             elif cmd == "help":

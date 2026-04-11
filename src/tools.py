@@ -196,23 +196,31 @@ def resolve_lecturer(query: str) -> tuple[str, str | None]:
     """
     Löst einen Namen oder ein Kürzel zu (kürzel, vollständiger_name) auf.
     Gibt (query, None) zurück wenn kein Match gefunden.
+    Inklusive Fuzzy-Matching für Tippfehler.
     """
-    # Schon ein Kürzel? (z.B. tama0001)
+    # 1. Schon ein Kürzel? (z.B. tama0001)
     if re.fullmatch(r"[a-z]{4}\d{4}", query.lower()):
         kuerzel = query.lower()
         info = _LECTURERS.get(kuerzel)
         return kuerzel, info["name"] if info else None
 
-    # Name-Suche: exakt, dann Teilstring
+    # 2. Name-Suche: exakt, dann Teilstring
     q = _norm(query)
     if q in _LECTURERS_BY_NAME:
         kuerzel = _LECTURERS_BY_NAME[q]
         return kuerzel, _LECTURERS[kuerzel]["name"]
 
-    # Teilstring-Suche über alle normierten Namen
+    # 3. Teilstring-Suche über alle normierten Namen
     for norm_name, kuerzel in _LECTURERS_BY_NAME.items():
         if q in norm_name:
             return kuerzel, _LECTURERS[kuerzel]["name"]
+
+    # 4. Fuzzy Matching (für Tippfehler wie Peter Offerman -> Offermann)
+    import difflib
+    matches = difflib.get_close_matches(q, _LECTURERS_BY_NAME.keys(), n=1, cutoff=0.8)
+    if matches:
+        kuerzel = _LECTURERS_BY_NAME[matches[0]]
+        return kuerzel, _LECTURERS[kuerzel]["name"]
 
     return query, None
 
