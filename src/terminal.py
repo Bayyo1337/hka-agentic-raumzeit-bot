@@ -125,27 +125,29 @@ async def _handle_test_cmd(args: list[str]):
             console.print(f"[green]Erfolg:[/green] {new_count} neue Testfälle gespeichert.")
         except Exception as e:
             console.print(f"[red]Fehler bei der Generierung:[/red] {e}")
+elif sub == "run":
+    cases = await db.get_all_test_cases()
+    if not cases:
+        console.print("[yellow]Keine Testfälle vorhanden. Nutze 'test generate'.[/yellow]")
+        return
 
-    elif sub == "run":
-        cases = await db.get_all_test_cases()
-        if not cases:
-            console.print("[yellow]Keine Testfälle vorhanden. Nutze 'test generate'.[/yellow]")
-            return
-        
-        console.print(f"Starte Stresstest mit {len(cases)} parallelen Anfragen...")
-        
-        async def _run_test(q):
-            try:
-                start_time = datetime.now()
-                reply, in_tok, out_tok, _ = await agent.run(q, [], user_label="StressTest")
-                duration = (datetime.now() - start_time).total_seconds()
-                return q, "OK", in_tok + out_tok, f"{duration:.2f}s", reply[:50].replace("\n", " ")
-            except Exception as e:
-                return q, "ERROR", 0, "0s", str(e)
+    console.print(f"Starte sequentiellen Test mit {len(cases)} Anfragen (1s Pause)...")
+    results = []
 
-        results = await asyncio.gather(*[_run_test(c) for c in cases])
-        
-        test_table = Table(title="Stresstest Ergebnisse", show_lines=True)
+    for i, q in enumerate(cases, 1):
+        try:
+            start_time = datetime.now()
+            # Agent direkt aufrufen
+            reply, in_tok, out_tok, _ = await agent.run(q, [], user_label="StressTest")
+            duration = (datetime.now() - start_time).total_seconds()
+            results.append((q, "OK", in_tok + out_tok, f"{duration:.2f}s", reply[:50].replace("\n", " ")))
+        except Exception as e:
+            results.append((q, "ERROR", 0, "0s", str(e)))
+
+        if i < len(cases):
+            await asyncio.sleep(1) # Drosselung für API Limits
+
+    test_table = Table(title="Stresstest Ergebnisse", show_lines=True)
         test_table.add_column("Anfrage", style="cyan")
         test_table.add_column("Status", justify="center")
         test_table.add_column("Tokens", justify="right")

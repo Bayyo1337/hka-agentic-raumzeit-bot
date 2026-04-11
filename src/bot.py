@@ -51,6 +51,7 @@ _JA   = {"ja", "j", "yes", "y", "stimmt", "korrekt", "ok", "okay"}
 
 _USER_COMMANDS = [
     BotCommand("start", "Hilfe & Übersicht"),
+    BotCommand("setcourse", "Eigener Stundenplan festlegen"),
     BotCommand("stats", "Deine Nutzungsstatistik"),
     BotCommand("reset", "Gesprächsverlauf löschen"),
 ]
@@ -246,6 +247,7 @@ async def _post_init(app) -> None:
 async def main_async() -> None:
     app = ApplicationBuilder().token(settings.telegram_bot_token).post_init(_post_init).build()
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("setcourse", cmd_setcourse))
     app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("admin", admin.cmd_admin))

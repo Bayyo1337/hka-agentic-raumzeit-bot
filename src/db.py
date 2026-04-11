@@ -52,7 +52,8 @@ async def init() -> None:
                 first_name        TEXT NOT NULL DEFAULT '',
                 banned            INTEGER NOT NULL DEFAULT 0,
                 custom_rate_limit INTEGER NOT NULL DEFAULT -1,
-                last_seen         TEXT NOT NULL DEFAULT ''
+                last_seen         TEXT NOT NULL DEFAULT '',
+                primary_course    TEXT
             );
 
             CREATE TABLE IF NOT EXISTS test_cases (
@@ -61,6 +62,17 @@ async def init() -> None:
                 created_at TEXT NOT NULL
             );
         """)
+        # Schema-Migration: Falls die Spalten in users fehlen
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0")
+        except: pass
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN custom_rate_limit INTEGER NOT NULL DEFAULT -1")
+        except: pass
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN primary_course TEXT")
+        except: pass
+        
         await db.commit()
     log.info("Datenbank initialisiert: %s", DB_PATH)
 
@@ -335,6 +347,15 @@ async def set_custom_rate_limit(user_id: int, limit: int) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "UPDATE users SET custom_rate_limit=? WHERE user_id=?", (limit, user_id)
+        )
+        await db.commit()
+
+
+async def set_primary_course(user_id: int, course: str | None) -> None:
+    """Setzt den Haupt-Kurs für einen Nutzer (z.B. MABB.7)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET primary_course=? WHERE user_id=?", (course.upper() if course else None, user_id)
         )
         await db.commit()
 
