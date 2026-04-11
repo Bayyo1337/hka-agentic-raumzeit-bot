@@ -745,51 +745,6 @@ async def get_university_calendar() -> list:
         return r.json()
 
 
-async def get_mensa_menu(date: str | None = None) -> dict:
-    """Holt den Speiseplan der Mensa Moltke via OpenMensa API."""
-    if not date:
-        date = _date.today().isoformat()
-    
-    url = f"https://openmensa.org/api/v2/canteens/34/days/{date}/meals"
-    try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(url)
-            if r.status_code == 404:
-                return {"date": date, "closed": True, "meals": []}
-            r.raise_for_status()
-            meals = r.json()
-            return {"date": date, "closed": False, "meals": meals}
-    except Exception as e:
-        log.error("Fehler bei Mensa-Abfrage: %s", e)
-        return {"error": f"Mensa-API nicht erreichbar: {e}"}
-
-
-async def get_mensa_meal_details(date: str, meal_name_or_id: str) -> dict:
-    """Holt Details zu einem spezifischen Gericht (Allergene, Notizen)."""
-    menu = await get_mensa_menu(date)
-    if menu.get("error"): return menu
-    if menu.get("closed"): return menu
-    
-    meals = menu.get("meals", [])
-    target = None
-    search = _norm(meal_name_or_id)
-    for m in meals:
-        if str(m.get("id")) == meal_name_or_id or search in _norm(m.get("name", "")):
-            target = m
-            break
-    
-    if not target:
-        return {"error": f"Gericht '{meal_name_or_id}' am {date} nicht im Menü gefunden."}
-    
-    return {
-        "date": date,
-        "name": target.get("name"),
-        "category": target.get("category"),
-        "notes": target.get("notes", []),
-        "prices": target.get("prices", {})
-    }
-
-
 async def get_campus_map(query: str) -> dict:
     """Bestimmt Gebäude und Stockwerk für den Lageplan."""
     query = query.upper().strip()
@@ -930,34 +885,6 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "get_mensa_menu",
-            "description": "Gibt den Speiseplan der Mensa Moltke für einen bestimmten Tag zurück.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "date": {"type": "string", "description": "Datum im Format YYYY-MM-DD."}
-                }
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_mensa_meal_details",
-            "description": "Gibt Details (Allergene, Inhaltsstoffe) zu einem bestimmten Gericht zurück.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "meal": {"type": "string", "description": "Name oder ID des Gerichts."},
-                    "date": {"type": "string", "description": "Datum im Format YYYY-MM-DD."}
-                },
-                "required": ["meal"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "get_campus_map",
             "description": "Liefert Informationen zum Ort eines Gebäudes oder Raums auf dem Campus.",
             "parameters": {
@@ -983,7 +910,5 @@ TOOL_HANDLERS = {
     "get_departments":         lambda inp: get_departments(),
     "get_courses_of_study":    lambda inp: get_courses_of_study(inp.get("faculty")),
     "get_university_calendar": lambda inp: get_university_calendar(),
-    "get_mensa_menu":          lambda inp: get_mensa_menu(inp.get("date")),
-    "get_mensa_meal_details":  lambda inp: get_mensa_meal_details(inp.get("date", _date.today().isoformat()), inp.get("meal", "")),
     "get_campus_map":          lambda inp: get_campus_map(inp.get("room_or_building", "")),
 }

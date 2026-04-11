@@ -78,7 +78,6 @@ def _command_help(is_admin: bool) -> str:
         "",
         "Du kannst mich einfach in natürlicher Sprache fragen. Hier sind einige Beispiele:",
         "• *Räume:* \"Wann ist M-102 heute frei?\" oder \"Wo ist Gebäude E?\"",
-        "• *Mensa:* \"Was gibt es heute in der Mensa?\" oder \"Ist Schweinefleisch im Wahlessen 1?\"",
         "• *Kurse:* \"Stundenplan MABB Semester 7\" oder \"Was habe ich am Mittwoch?\"",
         "• *Dozenten:* \"Wo unterrichtet Peter Offermann?\"",
         "• *Kalender:* \"Wann sind die nächsten Prüfungen?\"",
@@ -120,8 +119,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (
         "🏫 *Raumzeit-Bot*\n\n"
         "Stell mir einfach eine Frage auf Deutsch, z.B.:\n"
-        "• Wann ist Raum M-001 heute frei?\n"
-        "• Was gibt es heute in der Mensa?\n"
+        "• Wann ist Raum M-102 heute frei?\n"
         "• Wo ist das Gebäude LI?\n"
         "• Zeig mir den Stundenplan von MABB Semester 7\n\n"
         + _command_help(is_admin)

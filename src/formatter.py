@@ -282,64 +282,6 @@ def _fmt_lecturer(result: dict) -> str:
     return "\n".join(all_lines).strip()
 
 
-def _fmt_mensa(result: dict) -> str:
-    if "error" in result:
-        return f"❌ {result['error']}"
-    
-    date_str = _fmt_date(result.get("date", ""))
-    if result.get("closed"):
-        return f"🍴 *Mensa Moltke* – {date_str}\nDie Mensa ist an diesem Tag geschlossen."
-    
-    meals = result.get("meals", [])
-    if not meals:
-        return f"🍴 *Mensa Moltke* – {date_str}\nKein Speiseplan verfügbar."
-    
-    lines = [f"🍴 *Mensa Moltke* – {date_str}", ""]
-    from collections import defaultdict
-    by_cat = defaultdict(list)
-    for m in meals:
-        by_cat[m.get("category", "Diverses")].append(m)
-    
-    for cat in sorted(by_cat.keys()):
-        lines.append(f"*{cat}:*")
-        for m in by_cat[cat]:
-            name = m.get("name", "Unbekannt")
-            prices = m.get("prices", {})
-            p_stud = f"{prices.get('students'):.2f}€" if prices.get("students") else ""
-            lines.append(f"  • {name}" + (f" ({p_stud})" if p_stud else ""))
-        lines.append("")
-        
-    lines.append("_Details zu Inhaltsstoffen mit: 'Was ist im [Gericht] drin?'_")
-    return "\n".join(lines)
-
-
-def _fmt_mensa_details(result: dict) -> str:
-    if "error" in result:
-        return f"❌ {result['error']}"
-    
-    name = result.get("name", "Unbekanntes Gericht")
-    notes = result.get("notes", [])
-    prices = result.get("prices", {})
-    
-    lines = [f"🍕 *{name}*", ""]
-    if prices:
-        p_list = []
-        if prices.get("students"): p_list.append(f"Studierende: {prices['students']:.2f}€")
-        if prices.get("employees"): p_list.append(f"Bedienstete: {prices['employees']:.2f}€")
-        if p_list:
-            lines.append("💰 *Preise:*")
-            lines.extend([f"  • {p}" for p in p_list])
-            lines.append("")
-            
-    if notes:
-        lines.append("📝 *Inhaltsstoffe & Hinweise:*")
-        lines.extend([f"  • {n}" for n in notes])
-    else:
-        lines.append("Keine Detail-Informationen verfügbar.")
-        
-    return "\n".join(lines)
-
-
 def _fmt_map(result: dict) -> str:
     building = result.get("building", "?")
     floor = result.get("floor", "unbekanntes Stockwerk")
@@ -407,8 +349,6 @@ _FORMATTERS = {
     "get_course_timetable":    _fmt_course,
     "get_lecturer_timetable":  _fmt_lecturer,
     "get_university_calendar": _fmt_calendar,
-    "get_mensa_menu":          _fmt_mensa,
-    "get_mensa_meal_details":  _fmt_mensa_details,
     "get_campus_map":          _fmt_map,
     "get_departments":         _fmt_list,
     "get_courses_of_study":    _fmt_list,
