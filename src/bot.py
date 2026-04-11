@@ -118,15 +118,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     is_admin = admin._is_admin(user_id)
     text = (
-        "🏫 Raumzeit-Bot\n\n"
+        "🏫 *Raumzeit-Bot*\n\n"
         "Stell mir einfach eine Frage auf Deutsch, z.B.:\n"
-        "  • Wann ist Raum M-001 heute frei?\n"
-        "  • Was gibt es heute in der Mensa?\n"
-        "  • Wo ist das Gebäude LI?\n"
-        "  • Zeig mir den Stundenplan von MABB Semester 7\n\n"
+        "• Wann ist Raum M-001 heute frei?\n"
+        "• Was gibt es heute in der Mensa?\n"
+        "• Wo ist das Gebäude LI?\n"
+        "• Zeig mir den Stundenplan von MABB Semester 7\n\n"
         + _command_help(is_admin)
     )
-    msg = await update.message.reply_text(text)
+    msg = await update.message.reply_text(text, parse_mode="Markdown")
     _bot_messages.setdefault(update.effective_chat.id, []).append(msg.message_id)
 
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
