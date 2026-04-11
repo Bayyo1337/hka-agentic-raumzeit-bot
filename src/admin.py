@@ -387,6 +387,14 @@ async def cmd_togglepersonal(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 @_require_admin
+async def cmd_togglemap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from src.state import _map_feature
+    _map_feature[0] = not _map_feature[0]
+    status = "AN" if _map_feature[0] else "AUS"
+    await update.message.reply_text(f"📍 Lageplan-Feature (Karten-Anzeige) ist jetzt {status}.")
+
+
+@_require_admin
 async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     from src.bot import _run_index_build, _run_lecturer_build
     msg = await update.message.reply_text("⏳ Kurs-Index & Dozenten-Index werden neu aufgebaut...")

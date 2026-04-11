@@ -10,3 +10,6 @@ _maintenance: list = [False, "🔧 Der Bot wird gerade gewartet. Bitte versuche 
 
 # Persönliche Features (Stundenplan-Hinterlegung) an/aus
 _personal_features: list = [False]
+
+# Lageplan-Feature (Karten-Anzeige) an/aus
+_map_feature: list = [True]

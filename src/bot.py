@@ -19,7 +19,7 @@ from src import formatter
 from src import admin
 from src import terminal
 from src.formatter import CONFIRM_SENTINEL
-from src.state import _maintenance, _personal_features
+from src.state import _maintenance, _personal_features, _map_feature
 
 # Logging Setup
 from rich.logging import RichHandler
@@ -63,6 +63,7 @@ _ADMIN_COMMANDS = _USER_COMMANDS + [
     BotCommand("admin", "System- & Nutzerübersicht"),
     BotCommand("sync", "Datenbank-Abgleich mit HKA"),
     BotCommand("togglepersonal", "Feature: Personalisierung an/aus"),
+    BotCommand("togglemap", "Feature: Lageplan an/aus"),
     BotCommand("loglevel", "Logging-Detailtiefe ändern"),
     BotCommand("maintenance", "Wartungsmodus steuern"),
     BotCommand("broadcast", "Nachricht an alle Nutzer"),
@@ -303,15 +304,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         # Sonderaktionen prüfen (z.B. Lageplan senden)
         map_sent = False
-        for name, res in collected_results:
-            if name == "get_campus_map" and res.get("action") == "send_map":
-                building = res.get("building")
-                map_path = f"data/maps/map_{building}.png"
-                import os
-                if os.path.exists(map_path):
-                    await context.bot.send_photo(chat_id=chat_id, photo=open(map_path, "rb"), caption=reply, parse_mode="Markdown")
-                    map_sent = True
-                    break
+        if _map_feature[0]:
+            for name, res in collected_results:
+                if name == "get_campus_map" and res.get("action") == "send_map":
+                    building = res.get("building")
+                    map_path = f"data/maps/map_{building}.png"
+                    import os
+                    if os.path.exists(map_path):
+                        await context.bot.send_photo(chat_id=chat_id, photo=open(map_path, "rb"), caption=reply, parse_mode="Markdown")
+                        map_sent = True
+                        break
         
         if not map_sent:
             if CONFIRM_SENTINEL in reply:
@@ -383,6 +385,7 @@ async def main_async() -> None:
     app.add_handler(CommandHandler("setprovider", admin.cmd_setprovider))
     app.add_handler(CommandHandler("loglevel", admin.cmd_loglevel))
     app.add_handler(CommandHandler("togglepersonal", admin.cmd_togglepersonal))
+    app.add_handler(CommandHandler("togglemap", admin.cmd_togglemap))
     app.add_handler(CommandHandler("maintenance", admin.cmd_maintenance))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
