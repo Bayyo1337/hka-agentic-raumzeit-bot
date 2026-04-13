@@ -2,6 +2,7 @@
 name = "raumzeit-ki-agent"
 version = "0.1.0"
 description = "Telegram bot with Claude tool-use for Raumzeit API"
+license = { text = "AGPL-3.0-or-later" }
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.40.0",
