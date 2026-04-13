@@ -142,19 +142,26 @@ async def build_lecturer_index() -> int:
             if r.status_code != 200: break
             
             import re as _re
-            # E-Mail-Scraper (findet mehr Formate)
-            email_pattern = r'([\w.\-]+)<span[^>]*>spam prevention</span>@h-ka\.de'
-            for username in _re.findall(email_pattern, r.text):
+            # 1. Versuche Tabellen-Struktur (Standard-A-Z Liste)
+            pattern_table = r'<span class="person__user-academic-title">(.*?)</span>.*?([\w.\-]+)<span[^>]*>spam prevention</span>@h-ka\.de'
+            matches = _re.findall(pattern_table, r.text, _re.DOTALL)
+            
+            # 2. Versuche Div-Struktur (Solr Suchergebnisse)
+            if not matches:
+                pattern_solr = r'<h3[^>]*>.*?<a[^>]*>(.*?)</a>.*?([\w.\-]+)<span[^>]*>spam prevention</span>@h-ka\.de'
+                matches = _re.findall(pattern_solr, r.text, _re.DOTALL)
+            
+            for name, username in matches:
+                full_name = _re.sub(r'\s+', ' ', name).strip()
                 parts = username.split(".")
                 if len(parts) >= 2:
-                    vorname, nachname = parts[0], parts[-1]
-                    name = f"{vorname.capitalize()} {nachname.capitalize()}"
                     persons.append({
-                        "name": name, 
-                        "vorname": vorname, 
-                        "nachname": nachname, 
+                        "name": full_name,
+                        "vorname": parts[0],
+                        "nachname": parts[-1],
                         "email": f"{username}@h-ka.de"
                     })
+            
             if f"page={page + 1}" not in r.text and f"page%5D={page + 1}" not in r.text:
                 break
             page += 1
@@ -197,30 +204,67 @@ def resolve_lecturer(query: str) -> tuple[str, str | None]:
     Löst einen Namen oder ein Kürzel zu (kürzel, vollständiger_name) auf.
     Gibt (query, None) zurück wenn kein Match gefunden.
     Inklusive Fuzzy-Matching für Tippfehler.
+    Wendet Namens-Verschönerungen an (Prof./Dozent).
     """
+    global _LECTURERS
+    if not _LECTURERS:
+        load_lecturers()
+
+    def _beautify(name: str) -> str:
+        if not name: return name
+        # Bereinigen von HTML-Entities falls welche übrig sind
+        name = name.replace("&nbsp;", " ").replace("&amp;", "&")
+        # Titel prüfen. Falls kein Prof./Dr. vorhanden, als "Dozent" kennzeichnen
+        n_lower = name.lower()
+        if "prof." not in n_lower and "dozent" not in n_lower:
+            return f"Dozent {name}"
+        return name
+
     # 1. Schon ein Kürzel? (z.B. tama0001)
-    if re.fullmatch(r"[a-z]{4}\d{4}", query.lower()):
-        kuerzel = query.lower()
+    # Robuste Normalisierung: Alles außer Buchstaben/Zahlen weg
+    q_lower = query.lower()
+    q_norm = re.sub(r'[^a-z0-9]', '', q_lower)
+    
+    # Exakter Treffer?
+    if re.fullmatch(r"[a-z]{4}\d{4}", q_norm):
+        info = _LECTURERS.get(q_norm)
+        if not info:
+            load_lecturers() # Lazy Load/Refresh
+            info = _LECTURERS.get(q_norm)
+        
+        if info:
+            return q_norm, _beautify(info["name"])
+    
+    # Kürzel irgendwo im String? (z.B. "fedi0001 (Prof. Feßler)")
+    match = re.search(r'([a-z]{4}\d{4})', q_lower)
+    if match:
+        kuerzel = match.group(1)
         info = _LECTURERS.get(kuerzel)
-        return kuerzel, info["name"] if info else None
+        if not info:
+            load_lecturers()
+            info = _LECTURERS.get(kuerzel)
+            
+        if info:
+            return kuerzel, _beautify(info["name"])
+        log.debug("Dozent-Kürzel %s (aus %s) nicht im Index gefunden", kuerzel, query)
 
     # 2. Name-Suche: exakt, dann Teilstring
     q = _norm(query)
     if q in _LECTURERS_BY_NAME:
         kuerzel = _LECTURERS_BY_NAME[q]
-        return kuerzel, _LECTURERS[kuerzel]["name"]
+        return kuerzel, _beautify(_LECTURERS[kuerzel]["name"])
 
     # 3. Teilstring-Suche über alle normierten Namen
     for norm_name, kuerzel in _LECTURERS_BY_NAME.items():
         if q in norm_name:
-            return kuerzel, _LECTURERS[kuerzel]["name"]
+            return kuerzel, _beautify(_LECTURERS[kuerzel]["name"])
 
     # 4. Fuzzy Matching (für Tippfehler wie Peter Offerman -> Offermann)
     import difflib
     matches = difflib.get_close_matches(q, _LECTURERS_BY_NAME.keys(), n=1, cutoff=0.8)
     if matches:
         kuerzel = _LECTURERS_BY_NAME[matches[0]]
-        return kuerzel, _LECTURERS[kuerzel]["name"]
+        return kuerzel, _beautify(_LECTURERS[kuerzel]["name"])
 
     return query, None
 
@@ -248,13 +292,31 @@ def _parse_timetable_text(text: str, filter_date: str | None = None) -> list[dic
             if filter_weekday is not None and day != filter_weekday:
                 log.debug("Parser Filter: Skip day %d (expected %d)", day, filter_weekday)
                 continue
+            
             start_min, end_min = int(parts[1]), int(parts[2])
+            course_code = parts[3]
+            raw_name = parts[4]
+            
+            # Dozent aus Name extrahieren falls vorhanden (z.B. "Modul (kuer0001)")
+            lecturer = ""
+            name = raw_name
+            import re
+            match = re.search(r'\((([a-z]{4}\d{4})|([a-z]{3,10}))\)', raw_name)
+            if match:
+                kuerzel = match.group(1)
+                _, full_name = resolve_lecturer(kuerzel)
+                lecturer = full_name or kuerzel
+                # Kürzel aus dem Namen entfernen für saubere Darstellung
+                name = raw_name.replace(match.group(0), "").strip()
+            
             bookings.append({
                 "day": _WEEKDAYS.get(day, str(day)),
                 "start": f"{start_min // 60:02d}:{start_min % 60:02d}",
                 "end": f"{end_min // 60:02d}:{end_min % 60:02d}",
-                "course": parts[3],
-                "name": parts[4],
+                "course": course_code,
+                "name": course_code, # Fallback
+                "module": name,
+                "lecturer": lecturer
             })
         except (ValueError, IndexError):
             continue
@@ -488,6 +550,20 @@ def _parse_ical(text: str, filter_date: str | None = None,
             current = {}
         elif line == "END:VEVENT":
             if current:
+                # Dozent aus SUMMARY extrahieren (z.B. "Modul (fedi0001)")
+                raw_name = current.get("name", "")
+                name = raw_name
+                lecturer = ""
+                import re
+                match = re.search(r'\((([a-z]{4}\d{4})|([a-z]{3,10}))\)', raw_name)
+                if match:
+                    kuerzel = match.group(1)
+                    _, full_name = resolve_lecturer(kuerzel)
+                    lecturer = full_name or kuerzel
+                    name = raw_name.replace(match.group(0), "").strip()
+                
+                current["name"] = name
+                current["lecturer"] = lecturer
                 events.append(current)
         elif line.startswith("SUMMARY:"):
             current["name"] = line[8:].strip()
@@ -514,6 +590,7 @@ def _parse_ical(text: str, filter_date: str | None = None,
         "end": e.get("end", ""),
         "room": e.get("room", ""),
         "date": e.get("date", ""),
+        "lecturer": e.get("lecturer", ""),
     } for e in events]
 
 

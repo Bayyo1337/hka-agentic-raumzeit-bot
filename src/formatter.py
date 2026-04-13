@@ -46,15 +46,45 @@ def _minutes_to_hhmm(minutes: int) -> str:
 
 
 def _dedup_bookings(bookings: list[dict]) -> list[dict]:
-    """Entfernt Duplikate mit gleicher start+end+name-Kombination."""
-    seen: set[tuple] = set()
-    result = []
+    """Entfernt/Aggregiert Duplikate mit gleicher Zeit/Raum-Kombination."""
+    merged = []
+    
+    import re
+    def _norm_mod(m: str) -> str:
+        return re.sub(r'[^a-z0-9]', '', m.lower())
+        
     for b in bookings:
-        key = (_to_hhmm(b.get("start", "")), _to_hhmm(b.get("end", "")), b.get("name", ""), b.get("room", ""))
-        if key not in seen:
-            seen.add(key)
-            result.append(b)
-    return result
+        start = _to_hhmm(b.get("start", ""))
+        end = _to_hhmm(b.get("end", ""))
+        room = b.get("room", "")
+        name = b.get("name", "")
+        module = b.get("module", "")
+        lecturer = b.get("lecturer", "")
+        
+        found = False
+        for m in merged:
+            m_start = _to_hhmm(m.get("start", ""))
+            m_end = _to_hhmm(m.get("end", ""))
+            m_room = m.get("room", "")
+            if m_start == start and m_end == end and m_room == room:
+                # Prüfen, ob Dozent gleich ist ODER Modulname sehr ähnlich
+                if (lecturer and m.get("lecturer") == lecturer) or \
+                   (module and _norm_mod(module) in _norm_mod(m.get("module", ""))) or \
+                   (m.get("module") and _norm_mod(m.get("module", "")) in _norm_mod(module)):
+                    # Merge it!
+                    names = m.get("name", "").split(", ")
+                    if name not in names:
+                        names.append(name)
+                        m["name"] = ", ".join(names)
+                    # Nimm den Modulnamen, der aussagekräftiger aussieht (den längeren)
+                    if len(module) > len(m.get("module", "")):
+                        m["module"] = module
+                    found = True
+                    break
+        if not found:
+            merged.append(dict(b))
+            
+    return merged
 
 
 def _free_slots(bookings: list[dict], day_start: str = "08:00", day_end: str = "20:00") -> list[tuple[str, str]]:
@@ -128,9 +158,11 @@ def _render_timeline(bookings: list[dict], day_label: str = "", header_prefix: s
         if "fällt aus" in name_lower or "entfällt" in name_lower or "canceled" in name_lower:
             cancelled = True
         
-        label = f"*{course_code}*"
         if module and module != course_code:
-            label += f" {module}"
+            label = f"*({course_code})* {module}"
+        else:
+            label = f"*{course_code}*"
+            
         if lecturer:
             label += f" ({lecturer})"
         if room and not header_prefix.startswith("🏫"):

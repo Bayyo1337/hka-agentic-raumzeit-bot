@@ -355,8 +355,12 @@ async def _post_init(app) -> None:
         try: await app.bot.set_my_commands(_ADMIN_COMMANDS, scope={"type": "chat", "chat_id": aid})
         except: pass
     if await db.course_index_stale(): asyncio.create_task(_run_index_build())
-    if raumzeit.lecturers_stale(): asyncio.create_task(_run_lecturer_build())
-    else: raumzeit.load_lecturers()
+    
+    # Dozenten-Index immer erst laden, dann bei Bedarf im Hintergrund updaten
+    raumzeit.load_lecturers()
+    if raumzeit.lecturers_stale(): 
+        asyncio.create_task(_run_lecturer_build())
+    
     asyncio.create_task(_weekly_lecturer_refresh())
 
 async def main_async() -> None:
