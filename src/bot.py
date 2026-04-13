@@ -124,6 +124,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• Wo ist das Gebäude LI?\n"
         "• Zeig mir den Stundenplan von MABB Semester 7\n\n"
         + _command_help(is_admin)
+        + "\n\n📄 [Quellcode (AGPL-3.0)](https://github.com/Bayyo1337/hka-agentic-raumzeit-bot)"
     )
     msg = await update.message.reply_text(text, parse_mode="Markdown")
     _bot_messages.setdefault(update.effective_chat.id, []).append(msg.message_id)
