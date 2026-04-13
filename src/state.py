@@ -1,0 +1,15 @@
+"""
+Globaler Status für den Raumzeit-Bot.
+"""
+from datetime import datetime
+
+_BOT_START = datetime.now()
+
+# Wartungsmodus: (aktiv, Nachricht)
+_maintenance: list = [False, "🔧 Der Bot wird gerade gewartet. Bitte versuche es später."]
+
+# Persönliche Features (Stundenplan-Hinterlegung) an/aus
+_personal_features: list = [False]
+
+# Lageplan-Feature (Karten-Anzeige) an/aus
+_map_feature: list = [True]

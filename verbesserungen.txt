@@ -1,0 +1,39 @@
+- Wenn nach 2026-04-10 18:47:09,572 [DEBUG] src.bot: Anfrage von @Bloody_communist (chat=606817588): n-004 neue vorlesung gefragt wird, kommt eine Auflistung ohne Tage, es wird eine Liste erstellt mit mehreren Veranstaltungen zur gleichen Uhrzeit, und nicht Veranstaltungen pro tag Auflistung
+
+
+
+- wenn nur der Professor name eingegeben wird, kommt zurück: keine eintrage. Dort sollte eher eine Rückfrage an welchem Tag?
+
+- auch sollten die inputs an die llm api reduziert werden, es sollte eine logik implementiert werden, dass nicht die ganze api Antwort an das llm geschickt wird
+
+
+- auch passiert es oft, das er an bestimmten tagen sagt, der räum ist frei, obwohl er nicht frei ist laut Raumzeit laut gemini:
+
+1. Striktes Filter-Verhalten im Parser
+
+In der Datei tools.py nutzt die Funktion get_room_timetable das Raumzeit-eigene Text-Format als Fallback, wenn kein JSON zurückgegeben wird. Der dazugehörige Parser _parse_timetable_text filtert die Belegungen extrem strikt nach dem Wochentag:
+
+    Berechnung des Wochentags: Der Parser wandelt das Datum „2026-04-09“ in einen Wochentag um (Donnerstag = 4).
+
+    Abgleich: Die API liefert im Text-Format Zeilen wie wochentag#start#ende#kurs#name. Der Code prüft in Zeile 193: if filter_weekday is not None and day != filter_weekday: continue.
+
+    Das Problem: Wenn die API für einen Raum zwar Daten liefert, diese aber im Text-Format nicht exakt mit der Wochentags-Ziffer 4 beginnen, werden sie verworfen.
+
+2. Leere Ergebnisliste führt zur Standard-Antwort
+
+Wenn der Parser aufgrund des Filters keine Belegungen in die Liste schreibt, gibt die Funktion get_room_timetable eine leere bookings-Liste zurück.
+
+Der Formatter in formatter.py interpretiert eine leere Liste in der Funktion _fmt_room (Zeile 100) immer als Erfolg:
+
+    if not bookings: lines.append("✅ Ganztägig frei").
+
+3. Mögliche Fehlerquellen in den Daten
+
+Da die API einen Status 200 (OK), aber 0 Belegungen meldet, gibt es zwei wahrscheinlichste Szenarien:
+
+    Format-Mismatch: Die API liefert die Daten für Donnerstag möglicherweise mit einer anderen Kennung als der erwarteten 4 (z. B. wenn die API-Zählung von der Python-Zählung abweicht).
+
+    Raum-Namens-Auflösung: Obwohl resolve_room_name versucht, den Namen zu normalisieren, könnte die API bei der Abfrage von M-104 im Text-Modus leer antworten, wenn intern ein anderes Format (z. B. M104 ohne Bindestrich) für die Text-Schnittstelle zwingend ist.
+
+Lösungsvorschlag:
+Prüfe in src/tools.py, ob die API im Text-Format eventuell alle Tage der Woche gleichzeitig sendet und der Filter in Zeile 193 zu aggressiv ist. Du könntest testweise ein log.debug(f"Raw line: {line}") in _parse_timetable_text einbauen, um zu sehen, welche Wochentags-Ziffer die API tatsächlich für Donnerstage liefert.

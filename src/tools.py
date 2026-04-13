@@ -5,9 +5,13 @@ Auth: Bearer JWT via POST /private/api/v1/authentication
 """
 
 import asyncio
+import base64
 import json
 import logging
+import os
 import re
+import time
+import unicodedata
 from datetime import date as _date, datetime as _datetime
 import httpx
 from src.config import settings
@@ -16,6 +20,209 @@ from src import db
 log = logging.getLogger(__name__)
 
 _WEEKDAYS = {1: "Mo", 2: "Di", 3: "Mi", 4: "Do", 5: "Fr", 6: "Sa", 7: "So"}
+
+# ── Dozenten-Namens-Lookup ────────────────────────────────────────────────────
+
+_LECTURERS: dict[str, dict] = {}  # kürzel → {name, email}
+_LECTURERS_BY_NAME: dict[str, str] = {}  # normierter name → kürzel
+
+_LECTURERS_PATH = os.environ.get("LECTURERS_PATH", "data/lecturers.json")
+
+
+def _norm(s: str) -> str:
+    s = s.lower()
+    s = s.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+    s = unicodedata.normalize("NFD", s)
+    return "".join(c for c in s if unicodedata.category(c) != "Mn")
+
+
+def load_lecturers() -> int:
+    """Lädt data/lecturers.json. Gibt Anzahl der Einträge zurück (0 wenn nicht vorhanden)."""
+    global _LECTURERS, _LECTURERS_BY_NAME
+    try:
+        with open(_LECTURERS_PATH, encoding="utf-8") as f:
+            _LECTURERS = json.load(f)
+    except FileNotFoundError:
+        return 0
+    _LECTURERS_BY_NAME = {}
+    for kuerzel, info in _LECTURERS.items():
+        name = info.get("name", "")
+        # Index: vollständiger normierter Name + jedes einzelne Wort
+        _LECTURERS_BY_NAME[_norm(name)] = kuerzel
+        for part in name.split():
+            _LECTURERS_BY_NAME.setdefault(_norm(part), kuerzel)
+    log.info("Dozenten-Index geladen: %d Einträge", len(_LECTURERS))
+    return len(_LECTURERS)
+
+
+def lecturers_stale(max_age_days: int = 7) -> bool:
+    """True wenn lecturers.json fehlt oder älter als max_age_days Tage."""
+    try:
+        mtime = os.path.getmtime(_LECTURERS_PATH)
+        return (time.time() - mtime) > max_age_days * 86400
+    except FileNotFoundError:
+        return True
+
+
+async def build_lecturer_index() -> int:
+    """
+    Baut den Dozenten-Index neu auf:
+    1. Kürzel aus Kursen UND allen Raum-Belegungen sammeln
+    2. HKA-Personenliste scrapen
+    3. Matchen, speichern, neu laden
+    Gibt Anzahl gematchter Einträge zurück.
+    """
+    def _norm2ch(s: str) -> str:
+        return _norm(s)[:2]
+
+    token = await _get_token()
+    known: set[str] = set()
+
+    # 1a. Kürzel aus Kursen
+    async with httpx.AsyncClient(base_url=settings.raumzeit_base_url, timeout=15) as c:
+        r = await c.get("/api/v1/coursesofstudy/public")
+        r.raise_for_status()
+        abbreviations = [item["name"] for item in r.json() if isinstance(item, dict) and item.get("name")]
+
+    async def _fetch_course_contacts(key: str):
+        try:
+            async with httpx.AsyncClient(base_url=settings.raumzeit_base_url, timeout=15) as c:
+                r = await c.get(
+                    f"/api/v1/timetables/coursesemester/{key}",
+                    headers={"Authorization": f"Bearer {token}", "Accept": "text/calendar"},
+                )
+            if r.status_code == 200:
+                for line in r.text.splitlines():
+                    if line.startswith("CONTACT:"):
+                        for v in line[8:].split(","):
+                            if (v := v.strip()): known.add(v)
+        except Exception: pass
+
+    # 1b. Kürzel aus ALLEN Räumen (sehr effektiv!)
+    rooms = await _get_rooms_cached()
+    
+    async def _fetch_room_lecturers(room_name: str):
+        try:
+            async with httpx.AsyncClient(
+                base_url=settings.raumzeit_base_url,
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                timeout=15
+            ) as c:
+                r = await c.get(f"/api/v1/timetables/room/{room_name}")
+            if r.status_code == 200:
+                data = r.json()
+                for entry in (data if isinstance(data, list) else []):
+                    for k in (entry.get("lecturers") or []):
+                        known.add(k)
+        except Exception: pass
+
+    log.info("Dozenten-Index: Sammle Kürzel aus Kursen und Räumen...")
+    # Kurse scannen
+    keys = [f"{a}.{s}" for a in abbreviations for s in range(1, 8)]
+    for i in range(0, len(keys), 40):
+        await asyncio.gather(*[_fetch_course_contacts(k) for k in keys[i:i + 40]])
+    
+    # Alle Räume scannen (Batch)
+    room_names = [r.get("name") for r in rooms if isinstance(r, dict) and r.get("name")]
+    for i in range(0, len(room_names), 40):
+        await asyncio.gather(*[_fetch_room_lecturers(n) for n in room_names[i:i + 40]])
+    
+    log.info("Dozenten-Index: %d eindeutige Kürzel aus Raumzeit gesammelt", len(known))
+
+    # 2. HKA-Personenliste scrapen
+    HKA_BASE = "https://www.h-ka.de"
+    persons: list[dict] = []  # [{name, vorname, nachname, email}]
+    page = 1
+    async with httpx.AsyncClient(base_url=HKA_BASE, timeout=20, follow_redirects=True) as c:
+        while True:
+            url = f"/die-hochschule-karlsruhe/organisation-personen/personen-a-z?tx_solr%5Bpage%5D={page}"
+            try:
+                r = await c.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            except Exception: break
+            if r.status_code != 200: break
+            
+            import re as _re
+            # E-Mail-Scraper (findet mehr Formate)
+            email_pattern = r'([\w.\-]+)<span[^>]*>spam prevention</span>@h-ka\.de'
+            for username in _re.findall(email_pattern, r.text):
+                parts = username.split(".")
+                if len(parts) >= 2:
+                    vorname, nachname = parts[0], parts[-1]
+                    name = f"{vorname.capitalize()} {nachname.capitalize()}"
+                    persons.append({
+                        "name": name, 
+                        "vorname": vorname, 
+                        "nachname": nachname, 
+                        "email": f"{username}@h-ka.de"
+                    })
+            if f"page={page + 1}" not in r.text and f"page%5D={page + 1}" not in r.text:
+                break
+            page += 1
+    log.info("Dozenten-Index: %d Personen von h-ka.de geladen", len(persons))
+
+    # 3. Matchen
+    matched: dict[str, dict] = {}
+    for p in persons:
+        # Standard-Kürzel: na+vo+0001 (z.B. tama0001)
+        prefix = _norm2ch(p["nachname"]) + _norm2ch(p["vorname"])
+        # Erweiterte Heuristik: manche Kürzel nutzen mehr vom Nachnamen
+        alt_prefix = _norm(p["nachname"])[:4]
+        
+        for num in range(1, 21):
+            for pre in [prefix, alt_prefix]:
+                kuerzel = f"{pre}{num:04d}"
+                if kuerzel in known:
+                    matched[kuerzel] = {"name": p["name"], "email": p["email"]}
+                    break
+
+    # 4. Bestehende manuelle Einträge erhalten
+    try:
+        with open(_LECTURERS_PATH, encoding="utf-8") as f:
+            existing = json.load(f)
+            for k, v in existing.items():
+                if k not in matched: matched[k] = v
+    except FileNotFoundError: pass
+
+    # 5. Speichern + neu laden
+    os.makedirs(os.path.dirname(_LECTURERS_PATH), exist_ok=True)
+    with open(_LECTURERS_PATH, "w", encoding="utf-8") as f:
+        json.dump(matched, f, ensure_ascii=False, indent=2)
+    load_lecturers()
+    log.info("Dozenten-Index: %d Matches gespeichert", len(matched))
+    return len(matched)
+
+
+def resolve_lecturer(query: str) -> tuple[str, str | None]:
+    """
+    Löst einen Namen oder ein Kürzel zu (kürzel, vollständiger_name) auf.
+    Gibt (query, None) zurück wenn kein Match gefunden.
+    Inklusive Fuzzy-Matching für Tippfehler.
+    """
+    # 1. Schon ein Kürzel? (z.B. tama0001)
+    if re.fullmatch(r"[a-z]{4}\d{4}", query.lower()):
+        kuerzel = query.lower()
+        info = _LECTURERS.get(kuerzel)
+        return kuerzel, info["name"] if info else None
+
+    # 2. Name-Suche: exakt, dann Teilstring
+    q = _norm(query)
+    if q in _LECTURERS_BY_NAME:
+        kuerzel = _LECTURERS_BY_NAME[q]
+        return kuerzel, _LECTURERS[kuerzel]["name"]
+
+    # 3. Teilstring-Suche über alle normierten Namen
+    for norm_name, kuerzel in _LECTURERS_BY_NAME.items():
+        if q in norm_name:
+            return kuerzel, _LECTURERS[kuerzel]["name"]
+
+    # 4. Fuzzy Matching (für Tippfehler wie Peter Offerman -> Offermann)
+    import difflib
+    matches = difflib.get_close_matches(q, _LECTURERS_BY_NAME.keys(), n=1, cutoff=0.8)
+    if matches:
+        kuerzel = _LECTURERS_BY_NAME[matches[0]]
+        return kuerzel, _LECTURERS[kuerzel]["name"]
+
+    return query, None
 
 
 def _parse_timetable_text(text: str, filter_date: str | None = None) -> list[dict]:
@@ -30,12 +237,16 @@ def _parse_timetable_text(text: str, filter_date: str | None = None) -> list[dic
 
     bookings = []
     for line in text.strip().split("\n"):
+        if not line.strip():
+            continue
+        log.debug("Parser Raw Line: %s", line)
         parts = line.split("#")
         if len(parts) < 5:
             continue
         try:
             day = int(parts[0])
             if filter_weekday is not None and day != filter_weekday:
+                log.debug("Parser Filter: Skip day %d (expected %d)", day, filter_weekday)
                 continue
             start_min, end_min = int(parts[1]), int(parts[2])
             bookings.append({
@@ -54,11 +265,24 @@ def _parse_timetable_text(text: str, filter_date: str | None = None) -> list[dic
 # ---------------------------------------------------------------------------
 
 _token: str | None = None
+_token_expires: float = 0.0
+
+
+def _jwt_expiry(token: str) -> float:
+    """Decode JWT exp claim (no signature verification) → monotonic expiry timestamp."""
+    try:
+        payload_b64 = token.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        payload = json.loads(base64.b64decode(payload_b64))
+        exp_unix = payload.get("exp", 0)
+        return time.monotonic() + (exp_unix - time.time())
+    except Exception:
+        return time.monotonic() + 3600  # fallback: 1h
 
 
 async def _get_token() -> str:
-    global _token
-    if _token:
+    global _token, _token_expires
+    if _token and time.monotonic() < _token_expires - 30:
         return _token
     async with httpx.AsyncClient(base_url=settings.raumzeit_base_url) as c:
         r = await c.post(
@@ -67,6 +291,8 @@ async def _get_token() -> str:
         )
         r.raise_for_status()
         _token = r.json()["accessToken"]
+        _token_expires = _jwt_expiry(_token)
+        log.debug("Neues JWT geholt, läuft ab in %.0fs", _token_expires - time.monotonic())
         return _token
 
 
@@ -137,7 +363,10 @@ async def resolve_room_name(query: str) -> str:
 # ---------------------------------------------------------------------------
 
 async def get_all_rooms() -> list:
-    return await _get_rooms_cached()
+    rooms = await _get_rooms_cached()
+    # Nur relevante Felder zurückgeben — spart Tokens im Formatter/History
+    return [{"name": r.get("name", ""), "longName": r.get("longName", "")} 
+            for r in rooms if isinstance(r, dict)]
 
 
 async def get_room_timetable(room_name: str, date: str | None = None) -> dict:
@@ -145,7 +374,10 @@ async def get_room_timetable(room_name: str, date: str | None = None) -> dict:
     token = await _get_token()
     # Datum-Parameter nur für JSON-Endpoints; Text-Format wird client-seitig gefiltert
     params = {"date": date} if date else {}
-    async with _client(token) as c:
+    async with httpx.AsyncClient(
+        base_url=settings.raumzeit_base_url,
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    ) as c:
         log.debug("API → GET /timetables/room/%s  params=%s", canonical, params)
         r = await c.get(f"/api/v1/timetables/room/{canonical}", params=params)
         if r.status_code == 404:
@@ -155,16 +387,63 @@ async def get_room_timetable(room_name: str, date: str | None = None) -> dict:
     try:
         entries = r.json()
         bookings = []
-        for e in (entries if isinstance(entries, list) else []):
+        # Falls die API trotz Accept-Header Text liefert, wirft r.json() einen Fehler
+        if not isinstance(entries, list):
+             raise json.JSONDecodeError("Not a list", r.text, 0)
+        
+        for e in entries:
             if not isinstance(e, dict):
                 continue
-            start = e.get("startTime") or e.get("start", "")
-            end   = e.get("endTime")   or e.get("end", "")
-            name  = e.get("name") or e.get("longName", "")
-            bookings.append({"name": name, "start": start, "end": end})
+            
+            # Datum prüfen (firstDate ist der Tag des Termins bei WEEKLY/SINGLE)
+            occ_date = e.get("firstDate", "")
+            if date and occ_date and date != occ_date:
+                continue
+                
+            s_min = e.get("startTime")
+            e_min = e.get("endTime")
+            course_code = e.get("name", "")
+            module_name = e.get("longName", "")
+            
+            # Ausfallerkennung (JSON)
+            is_cancelled = len(e.get("cancellations") or []) > 0
+            
+            # Dozenten auflösen
+            lecturer_list = []
+            for kuerzel in (e.get("lecturers") or []):
+                _, full_name = resolve_lecturer(kuerzel)
+                lecturer_list.append(full_name or kuerzel)
+            lecturers_str = ", ".join(lecturer_list)
+            
+            if isinstance(s_min, int) and isinstance(e_min, int):
+                # Format: Minuten seit Mitternacht
+                start_str = f"{s_min // 60:02d}:{s_min % 60:02d}"
+                end_str = f"{e_min // 60:02d}:{e_min % 60:02d}"
+                
+                # Wochentag bestimmen
+                day_name = ""
+                if occ_date:
+                    try:
+                        dt = _date.fromisoformat(occ_date)
+                        day_name = _WEEKDAYS.get(dt.weekday() + 1, "")
+                    except ValueError:
+                        pass
+                
+                bookings.append({
+                    "name": course_code,
+                    "module": module_name,
+                    "lecturer": lecturers_str,
+                    "start": start_str,
+                    "end": end_str,
+                    "day": day_name,
+                    "date": occ_date,
+                    "cancelled": is_cancelled
+                })
         log.debug("API ← %d  (%d Belegungen, JSON)", r.status_code, len(bookings))
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
         bookings = _parse_timetable_text(r.text, date)
+        if not bookings:
+            log.debug("API ← %d (Leeres Ergebnis, roher Text: %s)", r.status_code, r.text[:200])
         log.debug("API ← %d  (%d Belegungen, Text-Format)", r.status_code, len(bookings))
 
     return {
@@ -188,6 +467,20 @@ def _parse_ical(text: str, filter_date: str | None = None,
     filter_date: exakter Tagesfilter
     date_from/date_to: Datumsbereich (inklusiv)
     """
+    def _parse_ts(val: str) -> tuple[str, str]:
+        """Extrahiert (iso_dt, iso_date) aus iCal-Zeitstempel."""
+        val = val.strip().rstrip("Z")
+        if ":" in val:
+            val = val.split(":")[-1]
+        
+        for fmt in ("%Y%m%dT%H%M%S", "%Y%m%d"):
+            try:
+                dt = _datetime.strptime(val[:15] if "T" in val else val[:8], fmt)
+                return dt.isoformat(), dt.date().isoformat()
+            except ValueError:
+                continue
+        return val, ""
+
     events = []
     current: dict = {}
     for line in text.splitlines():
@@ -199,25 +492,14 @@ def _parse_ical(text: str, filter_date: str | None = None,
         elif line.startswith("SUMMARY:"):
             current["name"] = line[8:].strip()
         elif line.startswith("DTSTART"):
-            val = line.split(":", 1)[-1].strip().rstrip("Z")
-            # TZID-Format: "Europe/Berlin:20260410T113000" → letztes Segment nach ":"
-            if ":" in val:
-                val = val.split(":")[-1].rstrip("Z")
-            try:
-                dt = _datetime.strptime(val[:15], "%Y%m%dT%H%M%S")
-                current["start"] = dt.isoformat()
-                current["date"] = dt.date().isoformat()
-            except ValueError:
-                current["start"] = val
+            val = line.split(":", 1)[-1]
+            iso_dt, iso_date = _parse_ts(val)
+            current["start"] = iso_dt
+            current["date"] = iso_date
         elif line.startswith("DTEND"):
-            val = line.split(":", 1)[-1].strip().rstrip("Z")
-            if ":" in val:
-                val = val.split(":")[-1].rstrip("Z")
-            try:
-                dt = _datetime.strptime(val[:15], "%Y%m%dT%H%M%S")
-                current["end"] = dt.isoformat()
-            except ValueError:
-                current["end"] = val
+            val = line.split(":", 1)[-1]
+            iso_dt, _ = _parse_ts(val)
+            current["end"] = iso_dt
         elif line.startswith("LOCATION:"):
             current["room"] = line[9:].strip()
 
@@ -226,7 +508,13 @@ def _parse_ical(text: str, filter_date: str | None = None,
     elif date_from and date_to:
         events = [e for e in events if date_from <= e.get("date", "") <= date_to]
 
-    return [{"name": e.get("name",""), "start": e.get("start",""), "end": e.get("end",""), "room": e.get("room","")} for e in events]
+    return [{
+        "name": e.get("name", ""),
+        "start": e.get("start", ""),
+        "end": e.get("end", ""),
+        "room": e.get("room", ""),
+        "date": e.get("date", ""),
+    } for e in events]
 
 
 async def _fetch_ical(course_semester: str, date: str | None = None,
@@ -284,23 +572,26 @@ async def get_course_timetable(course_semester: str, date: str | None = None) ->
     }
 
 
-async def get_lecturer_timetable(account: str) -> dict:
+async def get_lecturer_timetable(account: str, date: str | None = None) -> dict:
+    kuerzel, full_name = resolve_lecturer(account)
+    if full_name is None and not re.fullmatch(r"[a-z]{4}\d{4}", kuerzel.lower()):
+        return {"error": f"Dozent '{account}' nicht gefunden. Bitte Name oder Kürzel (z.B. 'tama0001') angeben. Tipp: /sync ausführen um die Dozenten-Liste zu aktualisieren."}
+
     token = await _get_token()
     async with _client(token) as c:
-        log.debug("API → GET /timetables/lecturer/%s", account)
-        r = await c.get(f"/api/v1/timetables/lecturer/{account}")
+        log.debug("API → GET /timetables/lecturer/%s", kuerzel)
+        r = await c.get(f"/api/v1/timetables/lecturer/{kuerzel}")
         log.debug("API ← %d  (%d bytes)", r.status_code, len(r.text))
         if r.status_code == 404:
-            return {"error": f"Dozent '{account}' nicht gefunden. Bitte prüfe das Account-Kürzel."}
+            return {"error": f"Dozent '{account}' nicht gefunden (Kürzel: {kuerzel})."}
         r.raise_for_status()
-        entries = r.json()
 
-    bookings = [
-        {"name": e.get("name", ""), "start": e.get("startTime", ""), "end": e.get("endTime", "")}
-        for e in (entries if isinstance(entries, list) else [])
-        if isinstance(e, dict)
-    ]
-    return {"lecturer": account, "bookings": bookings}
+    bookings = _parse_ical(r.text, filter_date=date)
+    return {
+        "lecturer": full_name or kuerzel,
+        "bookings": bookings,
+        "queried_date": date or "heute"
+    }
 
 
 async def get_departments() -> list:
@@ -413,18 +704,37 @@ async def fetch_course_brute_force(course_semester: str, date: str | None = None
     return {"course_semester": course_semester, "queried_date": label, "bookings": all_bookings}
 
 
+_probe_sem = asyncio.Semaphore(20)
+
+
 async def _probe_course_key(key: str) -> bool:
     """Prüft ob ein course_semester-Key in der API existiert (200 = True, sonst False)."""
+    async with _probe_sem:
+        try:
+            token = await _get_token()
+            async with _client(token) as c:
+                r = await c.get(
+                    f"/api/v1/timetables/coursesemester/{key}",
+                    headers={"Accept": "text/calendar"},
+                )
+            return r.status_code == 200
+        except Exception:
+            return False
+
+
+async def ping_api() -> dict:
+    """Prüft Erreichbarkeit der Raumzeit API: Auth + leichter GET."""
+    start = time.monotonic()
     try:
         token = await _get_token()
+        auth_ms = int((time.monotonic() - start) * 1000)
+        t2 = time.monotonic()
         async with _client(token) as c:
-            r = await c.get(
-                f"/api/v1/timetables/coursesemester/{key}",
-                headers={"Accept": "text/calendar"},
-            )
-        return r.status_code == 200
-    except Exception:
-        return False
+            r = await c.get("/api/v1/departments/public")
+        api_ms = int((time.monotonic() - t2) * 1000)
+        return {"ok": r.status_code < 400, "auth_ms": auth_ms, "api_ms": api_ms, "status": r.status_code}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 async def get_university_calendar() -> list:
@@ -433,6 +743,31 @@ async def get_university_calendar() -> list:
         r = await c.get("/api/v1/universitycalendar/")
         r.raise_for_status()
         return r.json()
+
+
+async def get_campus_map(query: str) -> dict:
+    """Bestimmt Gebäude und Stockwerk für den Lageplan."""
+    query = query.upper().strip()
+    building = ""
+    floor_info = ""
+    
+    match = re.match(r"^([A-Z]+)", query)
+    if match:
+        building = match.group(1)
+    
+    num_match = re.search(r"(\d+)", query)
+    if num_match:
+        num = int(num_match.group(1))
+        if num >= 100: floor_info = f"{num // 100}. Stock"
+        else: floor_info = "Erdgeschoss"
+        if "-" in query and query.startswith("-"): floor_info = "Untergeschoss"
+
+    return {
+        "action": "send_map",
+        "building": building,
+        "floor": floor_info,
+        "query": query
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -505,6 +840,10 @@ TOOL_DEFINITIONS = [
                         "type": "string",
                         "description": "Account/Kürzel des Dozenten, z.B. 'muster'.",
                     },
+                    "date": {
+                        "type": "string",
+                        "description": "Datum im Format YYYY-MM-DD (optional).",
+                    },
                 },
                 "required": ["account"],
             },
@@ -543,6 +882,20 @@ TOOL_DEFINITIONS = [
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_campus_map",
+            "description": "Liefert Informationen zum Ort eines Gebäudes oder Raums auf dem Campus.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "room_or_building": {"type": "string", "description": "Raumname (z.B. LI-145) oder Gebäude (z.B. Gebäude M)."}
+                },
+                "required": ["room_or_building"]
+            }
+        }
+    }
 ]
 
 # ---------------------------------------------------------------------------
@@ -553,8 +906,9 @@ TOOL_HANDLERS = {
     "get_all_rooms":           lambda inp: get_all_rooms(),
     "get_room_timetable":      lambda inp: get_room_timetable(inp["room_name"], inp.get("date")),
     "get_course_timetable":    lambda inp: get_course_timetable(inp["course_semester"], inp.get("date")),
-    "get_lecturer_timetable":  lambda inp: get_lecturer_timetable(inp["account"]),
+    "get_lecturer_timetable":  lambda inp: get_lecturer_timetable(inp["account"], inp.get("date")),
     "get_departments":         lambda inp: get_departments(),
     "get_courses_of_study":    lambda inp: get_courses_of_study(inp.get("faculty")),
     "get_university_calendar": lambda inp: get_university_calendar(),
+    "get_campus_map":          lambda inp: get_campus_map(inp.get("room_or_building", "")),
 }

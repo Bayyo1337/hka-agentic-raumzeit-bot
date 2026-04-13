@@ -45,7 +45,34 @@ async def init() -> None:
                 discovered_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_course_abbr ON course_index(abbreviation, semester);
+
+            CREATE TABLE IF NOT EXISTS users (
+                user_id           INTEGER PRIMARY KEY,
+                username          TEXT NOT NULL DEFAULT '',
+                first_name        TEXT NOT NULL DEFAULT '',
+                banned            INTEGER NOT NULL DEFAULT 0,
+                custom_rate_limit INTEGER NOT NULL DEFAULT -1,
+                last_seen         TEXT NOT NULL DEFAULT '',
+                primary_course    TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS test_cases (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                query_text TEXT UNIQUE,
+                created_at TEXT NOT NULL
+            );
         """)
+        # Schema-Migration: Falls die Spalten in users fehlen
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0")
+        except: pass
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN custom_rate_limit INTEGER NOT NULL DEFAULT -1")
+        except: pass
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN primary_course TEXT")
+        except: pass
+        
         await db.commit()
     log.info("Datenbank initialisiert: %s", DB_PATH)
 
@@ -244,3 +271,180 @@ async def clear_history(chat_id: int) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM histories WHERE chat_id=?", (chat_id,))
         await db.commit()
+
+
+# ── Nutzerverwaltung ─────────────────────────────────────────────────────────
+
+async def upsert_user(user_id: int, username: str, first_name: str) -> None:
+    """Legt Nutzerdaten an oder aktualisiert sie (bei jeder Nachricht)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO users (user_id, username, first_name, last_seen)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username   = excluded.username,
+                first_name = excluded.first_name,
+                last_seen  = excluded.last_seen
+        """, (user_id, username or "", first_name or "", datetime.now().isoformat()))
+        await db.commit()
+
+
+async def get_all_users() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen "
+            "FROM users ORDER BY last_seen DESC"
+        ) as cur:
+            rows = await cur.fetchall()
+    return [
+        {"user_id": r[0], "username": r[1], "first_name": r[2],
+         "banned": bool(r[3]), "custom_rate_limit": r[4], "last_seen": r[5]}
+        for r in rows
+    ]
+
+
+async def get_user(user_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen "
+            "FROM users WHERE user_id=?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return None
+    return {"user_id": row[0], "username": row[1], "first_name": row[2],
+            "banned": bool(row[3]), "custom_rate_limit": row[4], "last_seen": row[5]}
+
+
+async def find_user_by_username(username: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen "
+            "FROM users WHERE LOWER(username)=LOWER(?)", (username.lstrip("@"),)
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return None
+    return {"user_id": row[0], "username": row[1], "first_name": row[2],
+            "banned": bool(row[3]), "custom_rate_limit": row[4], "last_seen": row[5]}
+
+
+async def set_banned(user_id: int, banned: bool) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET banned=? WHERE user_id=?", (int(banned), user_id))
+        await db.commit()
+
+
+async def is_banned(user_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT banned FROM users WHERE user_id=?", (user_id,)) as cur:
+            row = await cur.fetchone()
+    return bool(row[0]) if row else False
+
+
+async def set_custom_rate_limit(user_id: int, limit: int) -> None:
+    """-1 = globale Einstellung nutzen."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET custom_rate_limit=? WHERE user_id=?", (limit, user_id)
+        )
+        await db.commit()
+
+
+async def set_primary_course(user_id: int, course: str | None) -> None:
+    """Setzt den Haupt-Kurs für einen Nutzer (z.B. MABB.7)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET primary_course=? WHERE user_id=?", (course.upper() if course else None, user_id)
+        )
+        await db.commit()
+
+
+async def get_custom_rate_limit(user_id: int) -> int:
+    """-1 = kein Override (globale Einstellung nutzen)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT custom_rate_limit FROM users WHERE user_id=?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+    return row[0] if row else -1
+
+
+async def reset_user_requests(user_id: int) -> None:
+    """Löscht alle Rate-Limit-Einträge für diesen Nutzer (setzt Zähler zurück)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM requests WHERE user_id=?", (user_id,))
+        await db.commit()
+
+
+async def clear_user_tokens(user_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM tokens WHERE user_id=?", (user_id,))
+        await db.commit()
+
+
+# ── Kurs-Index Extras ─────────────────────────────────────────────────────────
+
+async def get_course_index_age() -> datetime | None:
+    """Zeitpunkt des letzten Index-Aufbaus."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT MAX(discovered_at) FROM course_index") as cur:
+            row = await cur.fetchone()
+    if row and row[0]:
+        return datetime.fromisoformat(row[0])
+    return None
+
+
+async def get_course_keys_for_abbr(abbreviation: str) -> list[str]:
+    """Alle bekannten Keys für ein Kürzel, z.B. 'MABB' → ['MABB.6', 'MABB.6.A', ...]"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT full_key FROM course_index WHERE abbreviation=? ORDER BY semester, group_letter",
+            (abbreviation.upper(),)
+        ) as cur:
+            rows = await cur.fetchall()
+    return [r[0] for r in rows]
+
+
+# ── Feedback-Logs ─────────────────────────────────────────────────────────────
+
+def list_feedback_logs() -> list[str]:
+    """Gibt Dateinamen aller Feedback-Logs zurück."""
+    path = "data/feedback"
+    if not os.path.isdir(path):
+        return []
+    return sorted(f for f in os.listdir(path) if f.endswith(".json"))
+
+
+def delete_feedback_log(filename: str) -> bool:
+    """Löscht eine einzelne Feedback-Datei. Gibt False zurück wenn nicht gefunden."""
+    path = os.path.join("data/feedback", os.path.basename(filename))
+    if os.path.isfile(path):
+        os.remove(path)
+        return True
+    return False
+
+
+# ── Stresstest / Regressionstests ────────────────────────────────────────────
+
+async def save_test_case(query: str) -> bool:
+    """Speichert eine Test-Anfrage, falls sie noch nicht existiert."""
+    now = datetime.now().isoformat()
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "INSERT INTO test_cases (query_text, created_at) VALUES (?, ?)",
+                (query, now)
+            )
+            await db.commit()
+        return True
+    except aiosqlite.IntegrityError:
+        return False # Duplikat
+
+
+async def get_all_test_cases() -> list[str]:
+    """Gibt alle gespeicherten Test-Anfragen zurück."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT query_text FROM test_cases ORDER BY id DESC") as cur:
+            rows = await cur.fetchall()
+            return [r[0] for r in rows]

@@ -1,4 +1,7 @@
+import logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_log = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -13,7 +16,7 @@ class Settings(BaseSettings):
     raumzeit_password: str
 
     # LLM Provider: claude | gemini | groq | mistral | openrouter
-    llm_provider: str = "groq"
+    llm_provider: str = ""
     llm_model: str = ""   # leer = Provider-Default
 
     # API Keys (nur der gewählte Provider wird benötigt)
@@ -36,17 +39,27 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
+    def _parse_ids(self, raw: str, field: str) -> set[int]:
+        if not raw.strip():
+            return set()
+        result = set()
+        for x in raw.split(","):
+            x = x.strip()
+            if not x:
+                continue
+            try:
+                result.add(int(x))
+            except ValueError:
+                _log.warning("Ungültige User-ID in %s: %r (übersprungen)", field, x)
+        return result
+
     @property
     def allowed_ids(self) -> set[int]:
-        if not self.allowed_user_ids.strip():
-            return set()
-        return {int(x.strip()) for x in self.allowed_user_ids.split(",") if x.strip()}
+        return self._parse_ids(self.allowed_user_ids, "ALLOWED_USER_IDS")
 
     @property
     def admin_ids(self) -> set[int]:
-        if not self.admin_user_ids.strip():
-            return set()
-        return {int(x.strip()) for x in self.admin_user_ids.split(",") if x.strip()}
+        return self._parse_ids(self.admin_user_ids, "ADMIN_USER_IDS")
 
 
 settings = Settings()
