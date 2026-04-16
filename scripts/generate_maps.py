@@ -8,58 +8,55 @@ PDF_PATH = "HKA_Lageplan_A4.pdf"
 OUTPUT_DIR = Path("data/maps")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+# Diese Koordinaten wurden manuell via scripts/calibrate_map.py verifiziert
+# Die Nummern beziehen sich auf die vom Nutzer gewählten Kreise.
+BUILDING_COORDS = {
+    'A':  (385.0, 406.0),
+    'B':  (282.5, 215.6),
+    'HB': (276.1, 197.2),
+    'LB': (321.2, 220.5),
+    'C':  (340.0, 219.2),
+    'E':  (227.5, 325.7),
+    'HE': (198.3, 332.7),
+    'F':  (229.8, 290.8),
+    'K':  (308.8, 438.2),
+    'LI': (200.7, 288.8),
+    'M':  (231.8, 256.0)
+}
+
 def generate_maps():
     if not os.path.exists(PDF_PATH):
         print(f"Fehler: {PDF_PATH} nicht gefunden.")
         return
 
-    # PDF öffnen
     doc = fitz.open(PDF_PATH)
     page = doc[0]
     
-    # Hochauflösendes Bild rendern (300 DPI)
-    zoom = 4 # 72 * 4 = 288 DPI
+    # Hochauflösendes Bild rendern
+    zoom = 4 
     mat = fitz.Matrix(zoom, zoom)
     pix = page.get_pixmap(matrix=mat)
     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
     
-    # Wichtige Gebäude und deren (geschätzte) Suchbegriffe/Positionen
-    # Wir versuchen zuerst, den Text im PDF zu finden, um exakte Koordinaten zu erhalten.
-    buildings = ["A", "B", "C", "D", "E", "F", "K", "M", "LI", "HO", "P"]
+    print("Generiere final kalibrierte Lagepläne...")
     
-    print("Generiere Lagepläne...")
-    
-    for b_code in buildings:
-        # Suche Text im PDF (originale Koordinaten)
-        text_instances = page.search_for(b_code)
-        
-        # Falls Text gefunden wurde, nutzen wir die Koordinaten
-        if text_instances:
-            # Wir nehmen die erste Fundstelle
-            inst = text_instances[0]
-            # Umrechnen auf Zoom-Pixel
-            x = (inst.x0 + inst.x1) / 2 * zoom
-            y = (inst.y0 + inst.y1) / 2 * zoom
-        else:
-            # Fallback: Falls Text nicht im PDF suchbar ist, nutzen wir manuelle Offsets 
-            # (Diese müssten normalerweise verifiziert werden, hier als Platzhalter)
-            continue
+    for b_code, (pdf_x, pdf_y) in BUILDING_COORDS.items():
+        x = pdf_x * zoom
+        y = pdf_y * zoom
 
-        # Kopie des Originalbilds erstellen
         draw_img = img.copy()
         draw = ImageDraw.Draw(draw_img)
         
-        # Roten Kreis zeichnen
-        r = 60 # Radius des Kreises
-        draw.ellipse([x-r, y-r, x+r, y+r], outline="red", width=15)
+        # Stabiler roter Kreis um den Fundpunkt
+        r = 80 
+        draw.ellipse([x-r, y-r, x+r, y+r], outline="red", width=20)
         
-        # Speichern
         out_path = OUTPUT_DIR / f"map_{b_code}.png"
         draw_img.save(out_path)
-        print(f"  -> {out_path} erstellt.")
+        print(f"  -> {out_path} (Position: {pdf_x}/{pdf_y})")
 
     doc.close()
-    print("\nFertig! Alle Karten wurden in data/maps/ gespeichert.")
+    print("\nFertig! Alle Karten sind jetzt perfekt kalibriert.")
 
 if __name__ == "__main__":
     generate_maps()
