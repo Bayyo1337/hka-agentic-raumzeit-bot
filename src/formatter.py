@@ -340,6 +340,62 @@ def _fmt_lecturer_info(result: dict) -> str:
     return "\n".join(lines)
 
 
+def _fmt_mensa(result: dict) -> str:
+    if "error" in result: return f"❌ {result['error']}"
+    
+    canteen = result.get("canteen", "Mensa")
+    date_str = _fmt_date(result.get("date", ""))
+    
+    if result.get("closed"):
+        return f"🍴 *{canteen}* – {date_str}\nDie Mensa ist an diesem Tag geschlossen oder es liegen keine Daten vor."
+    
+    meals = result.get("meals", [])
+    if not meals:
+        return f"🍴 *{canteen}* – {date_str}\nAktuell kein Speiseplan verfügbar."
+    
+    lines = [f"🍴 *{canteen}*", f"📅 {date_str}", ""]
+    
+    # Gruppieren nach Linie
+    from collections import defaultdict
+    lines_map = defaultdict(list)
+    for m in meals:
+        lines_map[m.get("line", {}).get("name", "Diverses")].append(m)
+        
+    for line_name in sorted(lines_map.keys()):
+        lines.append(f"*{line_name}*")
+        for m in lines_map[line_name]:
+            icon = "🌱" if m.get("isVegan") else ("🥕" if m.get("isVegetarian") else "🥩")
+            price = m.get("price", {}).get("student")
+            price_str = f" ({price:.2f}€)" if price else ""
+            lines.append(f"  {icon} {m['name']}{price_str}")
+        lines.append("")
+        
+    lines.append("_Frage nach Details zu einem Gericht für Allergene._")
+    return "\n".join(lines)
+
+
+def _fmt_mensa_details(result: dict) -> str:
+    if "error" in result: return f"❌ {result['error']}"
+    
+    name = result.get("name", "Unbekanntes Gericht")
+    allergens = result.get("allergens", [])
+    additives = result.get("additives", [])
+    
+    lines = [f"🍱 *{name}*", ""]
+    if allergens:
+        lines.append("*Allergene:*")
+        lines.append(", ".join(allergens))
+        lines.append("")
+    if additives:
+        lines.append("*Zusatzstoffe:*")
+        lines.append(", ".join(additives))
+        
+    if not allergens and not additives:
+        lines.append("Keine Allergene oder Zusatzstoffe gelistet.")
+        
+    return "\n".join(lines)
+
+
 def _fmt_map(result: dict) -> str:
     building = result.get("building", "?")
     floor = result.get("floor", "unbekanntes Stockwerk")
@@ -380,7 +436,7 @@ def _fmt_calendar(result) -> str:
         start = item.get("start", item.get("startDate", ""))
         end = item.get("end", item.get("endDate", ""))
         if start: start = _fmt_date(start[:10]) if len(start) >= 10 else start
-        if end: end = _fmt_date(end[:10]) if len(end) >= 10 else end
+        if end: end = _date.fromisoformat(end[:10]) if len(end) >= 10 else end
         if start and end and start != end:
             lines.append(f"• {name}: {start} – {end}")
         elif start:
@@ -397,6 +453,8 @@ _FORMATTERS = {
     "get_course_timetable":    _fmt_course,
     "get_lecturer_timetable":  _fmt_lecturer,
     "get_lecturer_info":       _fmt_lecturer_info,
+    "get_mensa_menu":          _fmt_mensa,
+    "get_mensa_meal_details":  _fmt_mensa_details,
     "get_university_calendar": _fmt_calendar,
     "get_campus_map":          _fmt_map,
     "get_departments":         _fmt_list,

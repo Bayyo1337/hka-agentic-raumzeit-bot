@@ -884,6 +884,105 @@ async def get_campus_map(query: str) -> dict:
     }
 
 
+# ── Mensa-Integration (api.mensa-ka.de) ──────────────────────────────────────
+
+_CANTEENS_CACHE: dict[str, str] = {} # Name/Kürzel -> ID
+
+async def _get_canteen_id(query: str | None = None) -> str:
+    """Löst einen Mensa-Namen zu einer ID auf. Default: Mensa Moltke."""
+    global _CANTEENS_CACHE
+    if not _CANTEENS_CACHE:
+        try:
+            q = "{ getCanteens { id name } }"
+            async with httpx.AsyncClient(timeout=5) as client:
+                r = await client.post("https://api.mensa-ka.de", json={"query": q})
+                if r.status_code == 200:
+                    for c in r.json().get("data", {}).get("getCanteens", []):
+                        _CANTEENS_CACHE[_norm(c["name"])] = c["id"]
+        except: pass
+    
+    # Fallback/Default ID für Mensa Moltke
+    moltke_id = "8d1af6fc-547e-4078-a7f7-47948304e9fd"
+    if not query: return moltke_id
+    
+    search = _norm(query)
+    # Exakter Match oder Teil-Match im Cache suchen
+    for name, cid in _CANTEENS_CACHE.items():
+        if search in name: return cid
+        
+    return moltke_id
+
+async def get_mensa_menu(canteen: str | None = None, date: str | None = None) -> dict:
+    """Holt den Speiseplan einer Mensa via api.mensa-ka.de (GraphQL)."""
+    if not date:
+        date = _date.today().isoformat()
+    
+    canteen_id = await _get_canteen_id(canteen)
+    
+    query = """
+    query GetMeals($canteenId: ID!, $date: Date!) {
+      getMeals(canteenId: $canteenId, date: $date) {
+        id
+        name
+        price { student employee pupil guest }
+        line { name }
+        isVegan
+        isVegetarian
+      }
+    }
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                "https://api.mensa-ka.de",
+                json={"query": query, "variables": {"canteenId": canteen_id, "date": date}}
+            )
+            r.raise_for_status()
+            data = r.json()
+            meals = data.get("data", {}).get("getMeals")
+            
+            # Canteen Name für die Anzeige finden
+            c_name = "Mensa Moltke"
+            for n, cid in _CANTEENS_CACHE.items():
+                if cid == canteen_id:
+                    c_name = next((c["name"] for c in (await _fetch_canteens_raw()) if c["id"] == cid), "Unbekannte Mensa")
+                    break
+
+            if meals is None:
+                return {"canteen": c_name, "date": date, "closed": True, "meals": []}
+            return {"canteen": c_name, "date": date, "closed": False, "meals": meals}
+    except Exception as e:
+        return {"error": f"Mensa-API aktuell nicht erreichbar: {e}"}
+
+async def _fetch_canteens_raw():
+    async with httpx.AsyncClient() as client:
+        r = await client.post("https://api.mensa-ka.de", json={"query": "{ getCanteens { id name } }"})
+        return r.json().get("data", {}).get("getCanteens", [])
+
+async def get_mensa_meal_details(meal_id: str) -> dict:
+    """Holt Allergene und Zusatzstoffe für ein spezifisches Gericht."""
+    query = """
+    query GetMeal($id: ID!) {
+      getMeal(id: $id) {
+        name
+        allergens
+        additives
+      }
+    }
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                "https://api.mensa-ka.de",
+                json={"query": query, "variables": {"id": meal_id}}
+            )
+            r.raise_for_status()
+            data = r.json()
+            return data.get("data", {}).get("getMeal") or {"error": "Gericht nicht gefunden."}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # ---------------------------------------------------------------------------
 # Tool-Definitionen im OpenAI-Format (LiteLLM-kompatibel)
 # ---------------------------------------------------------------------------
@@ -980,6 +1079,34 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "get_mensa_menu",
+            "description": "Gibt den Speiseplan einer Mensa (Default: Moltke) für einen bestimmten Tag zurück.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "canteen": {"type": "string", "description": "Name der Mensa (z.B. 'Moltke', 'Adenauerring'). Optional."},
+                    "date": {"type": "string", "description": "Datum im Format YYYY-MM-DD (optional)."}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_mensa_meal_details",
+            "description": "Gibt Details (Zusatzstoffe, Allergene) zu einem Gericht zurück.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "meal_id": {"type": "string", "description": "Die technische ID des Gerichts aus get_mensa_menu."}
+                },
+                "required": ["meal_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_departments",
             "description": "Listet alle Departments/Fakultäten der Hochschule.",
             "parameters": {"type": "object", "properties": {}, "required": []},
@@ -1036,6 +1163,8 @@ TOOL_HANDLERS = {
     "get_course_timetable":    lambda inp: get_course_timetable(inp["course_semester"], inp.get("date")),
     "get_lecturer_timetable":  lambda inp: get_lecturer_timetable(inp["account"], inp.get("date")),
     "get_lecturer_info":       lambda inp: get_lecturer_info(inp["account"]),
+    "get_mensa_menu":          lambda inp: get_mensa_menu(inp.get("canteen"), inp.get("date")),
+    "get_mensa_meal_details":  lambda inp: get_mensa_meal_details(inp.get("meal_id")),
     "get_departments":         lambda inp: get_departments(),
     "get_courses_of_study":    lambda inp: get_courses_of_study(inp.get("faculty")),
     "get_university_calendar": lambda inp: get_university_calendar(),

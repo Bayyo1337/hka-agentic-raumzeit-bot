@@ -29,9 +29,10 @@ Der Bot ist modular aufgebaut und trennt strikt zwischen API-Logik, KI-Verarbeit
     *   Robuste Fehlerbehandlung für Telegram-Netzwerkfehler (kein Log-Spam).
     *   Automatischer Re-Build des Kurs-Index bei Veraltung.
 
+- **Mensa-Integration**: Ruft aktuelle Speisepläne der Mensa Moltke via `api.mensa-ka.de` (GraphQL) ab. Inklusive Preisen, Allergenen und vegan/vegetarisch Kennzeichnung.
+
 ## 📜 Wichtige Mandate & Regeln
 
-- **Keine Mensa-Funktion**: Die Mensa-Integration wurde vollständig entfernt (Tools, Formatter und Agent-Wissen bereinigt).
 - **Branch-Policy**: Alle Entwicklungen finden auf dem `gemini` Branch statt.
 - **Syntax-Pflicht**: Nach jeder Änderung muss `uv run python -m py_compile [files]` ausgeführt werden.
 - **Daten-Integrität**: Sensible Daten (`.env`, `data/*.db`, `data/test_runs/`) dürfen niemals committet werden (siehe `.gitignore`).

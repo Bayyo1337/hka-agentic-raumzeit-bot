@@ -43,6 +43,8 @@ Verfügbare Tools:
 - get_course_timetable: course_key ("KÜRZEL.SEMESTER", z.B. "MABB.6"), date (YYYY-MM-DD, optional)
 - get_lecturer_timetable: account (vollständiger Name z.B. "Masha Taheran", Nachname z.B. "Taheran", oder Kürzel z.B. "tama0001"), date (YYYY-MM-DD, optional)
 - get_lecturer_info: account (Name oder Kürzel) - NUTZE DIES NUR FÜR KONTAKTINFOS (E-Mail, Sprechzeit).
+- get_mensa_menu: canteen (Name z.B. "Moltke", "Adenauerring", optional), date (YYYY-MM-DD, optional). Default Canteen ist "Moltke".
+- get_mensa_meal_details: meal_id (technische ID aus get_mensa_menu)
 - get_all_rooms: keine Parameter
 - get_departments: keine Parameter
 - get_courses_of_study: faculty_id (optional)
