@@ -312,6 +312,11 @@ def _fmt_lecturer(result: dict) -> str:
     sorted_days = sorted(by_day_room.keys(), key=lambda d: _day_order.get(d, 99))
 
     all_lines = []
+    if email or sprechzeit:
+        if email: all_lines.append(f"📧 {email}")
+        if sprechzeit: all_lines.append(f"🕒 *Sprechzeit:* {sprechzeit}")
+        all_lines.append("")
+
     total_days = len(sorted_days)
     for day in sorted_days:
         rooms_on_day = by_day_room[day]
@@ -321,7 +326,8 @@ def _fmt_lecturer(result: dict) -> str:
             all_lines.extend(_render_timeline(deduplicated, date_label, f"🏫 *{room}*"))
             all_lines.append("")
 
-    return "\n".join(all_lines).strip()
+    # Header ganz am Anfang einfügen
+    return (header + "\n" + "\n".join(all_lines)).strip()
 
 
 def _fmt_lecturer_info(result: dict) -> str:

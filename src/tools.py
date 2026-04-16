@@ -189,9 +189,9 @@ async def build_lecturer_index() -> int:
                     r = await c.get(profile_url, headers={"User-Agent": "Mozilla/5.0"})
                 if r.status_code == 200:
                     import re as _re
-                    # Suche nach Sprechzeiten-Block
-                    # <p>Sprechzeiten:<br/>...</p>
-                    match = _re.search(r'Sprechzeiten\s*:\s*<br/>\s*(.*?)\s*</p>', r.text, _re.DOTALL | _re.IGNORECASE)
+                    # Suche nach Sprechzeiten-Block (Sprechzeiten: <br/> ...)
+                    pattern = r'(?:Sprechzeit(?:en)?|Sprechstunde(?:n)?)\s*:\s*<br\s*/?>\s*(.*?)\s*</p>'
+                    match = _re.search(pattern, r.text, _re.DOTALL | _re.IGNORECASE)
                     if match:
                         text = _re.sub(r'<[^>]*>', ' ', match.group(1)).strip()
                         matched[kuerzel]["sprechzeit"] = _re.sub(r'\s+', ' ', text)
