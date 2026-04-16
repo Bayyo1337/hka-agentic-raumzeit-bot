@@ -887,6 +887,7 @@ async def get_campus_map(query: str) -> dict:
 # ── Mensa-Integration (api.mensa-ka.de) ──────────────────────────────────────
 
 _CANTEENS_CACHE: dict[str, str] = {} # Name/Kürzel -> ID
+_MEALS_CACHE: dict[str, dict] = {}    # meal_id -> meal_details
 
 async def _get_canteen_id(query: str | None = None) -> str:
     """Löst einen Mensa-Namen zu einer ID auf. Default: Mensa Moltke."""
@@ -897,7 +898,8 @@ async def _get_canteen_id(query: str | None = None) -> str:
             async with httpx.AsyncClient(timeout=5) as client:
                 r = await client.post("https://api.mensa-ka.de", json={"query": q})
                 if r.status_code == 200:
-                    for c in r.json().get("data", {}).get("getCanteens", []):
+                    data = r.json()
+                    for c in (data.get("data") or {}).get("getCanteens", []):
                         _CANTEENS_CACHE[_norm(c["name"])] = c["id"]
         except: pass
     
@@ -914,20 +916,29 @@ async def _get_canteen_id(query: str | None = None) -> str:
 
 async def get_mensa_menu(canteen: str | None = None, date: str | None = None) -> dict:
     """Holt den Speiseplan einer Mensa via api.mensa-ka.de (GraphQL)."""
+    global _MEALS_CACHE
     if not date:
         date = _date.today().isoformat()
     
     canteen_id = await _get_canteen_id(canteen)
     
+    # Neues Schema: getCanteen -> lines -> meals
     query = """
-    query GetMeals($canteenId: ID!, $date: Date!) {
-      getMeals(canteenId: $canteenId, date: $date) {
-        id
+    query GetCanteenMeals($canteenId: ID!, $date: NaiveDate!) {
+      getCanteen(canteenId: $canteenId) {
         name
-        price { student employee pupil guest }
-        line { name }
-        isVegan
-        isVegetarian
+        lines {
+          id
+          name
+          meals(date: $date) {
+            id
+            name
+            price { student employee pupil guest }
+            mealType
+            allergens
+            additives
+          }
+        }
       }
     }
     """
@@ -939,48 +950,61 @@ async def get_mensa_menu(canteen: str | None = None, date: str | None = None) ->
             )
             r.raise_for_status()
             data = r.json()
-            meals = data.get("data", {}).get("getMeals")
             
-            # Canteen Name für die Anzeige finden
-            c_name = "Mensa Moltke"
-            for n, cid in _CANTEENS_CACHE.items():
-                if cid == canteen_id:
-                    c_name = next((c["name"] for c in (await _fetch_canteens_raw()) if c["id"] == cid), "Unbekannte Mensa")
-                    break
-
-            if meals is None:
-                return {"canteen": c_name, "date": date, "closed": True, "meals": []}
-            return {"canteen": c_name, "date": date, "closed": False, "meals": meals}
+            canteen_data = (data.get("data") or {}).get("getCanteen")
+            if not canteen_data:
+                return {"canteen": "Mensa", "date": date, "closed": True, "meals": []}
+            
+            c_name = canteen_data.get("name", "Mensa")
+            
+            flattened_meals = []
+            for line in canteen_data.get("lines", []):
+                l_name = line.get("name", "Diverses")
+                l_id = line.get("id")
+                for m in line.get("meals", []):
+                    # Kompatibilität zum Formatter und Fixes
+                    m["line"] = {"name": l_name}
+                    m["line_id"] = l_id # Für get_mensa_meal_details
+                    m["date"] = date
+                    
+                    # Dietary Flags
+                    mtype = m.get("mealType", "UNKNOWN")
+                    m["isVegan"] = mtype == "VEGAN"
+                    m["isVegetarian"] = mtype in ["VEGAN", "VEGETARIAN"]
+                    
+                    # Preise von Cent in Euro umrechnen
+                    if "price" in m and m["price"]:
+                        for k in ["student", "employee", "pupil", "guest"]:
+                            if m["price"].get(k):
+                                m["price"][k] = m["price"][k] / 100.0
+                    
+                    flattened_meals.append(m)
+                    _MEALS_CACHE[m["id"]] = m
+            
+            if not flattened_meals:
+                 return {"canteen": c_name, "date": date, "closed": True, "meals": []}
+            
+            return {"canteen": c_name, "date": date, "closed": False, "meals": flattened_meals}
     except Exception as e:
+        log.error("Mensa-API Fehler: %s", e)
         return {"error": f"Mensa-API aktuell nicht erreichbar: {e}"}
 
 async def _fetch_canteens_raw():
     async with httpx.AsyncClient() as client:
         r = await client.post("https://api.mensa-ka.de", json={"query": "{ getCanteens { id name } }"})
-        return r.json().get("data", {}).get("getCanteens", [])
+        data = r.json()
+        return (data.get("data") or {}).get("getCanteens", [])
 
 async def get_mensa_meal_details(meal_id: str) -> dict:
     """Holt Allergene und Zusatzstoffe für ein spezifisches Gericht."""
-    query = """
-    query GetMeal($id: ID!) {
-      getMeal(id: $id) {
-        name
-        allergens
-        additives
-      }
-    }
-    """
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(
-                "https://api.mensa-ka.de",
-                json={"query": query, "variables": {"id": meal_id}}
-            )
-            r.raise_for_status()
-            data = r.json()
-            return data.get("data", {}).get("getMeal") or {"error": "Gericht nicht gefunden."}
-    except Exception as e:
-        return {"error": str(e)}
+    # 1. Aus Cache versuchen
+    if meal_id in _MEALS_CACHE:
+        return _MEALS_CACHE[meal_id]
+        
+    # 2. API Fallback (benötigt leider lineId und date im neuen Schema)
+    # Da wir diese hier nicht haben, ist der Cache essentiell.
+    # Wir könnten versuchen, alle Linien nochmal zu scannen, aber das ist teuer.
+    return {"error": "Gerichts-Details aktuell nur direkt nach der Speiseplan-Abfrage verfügbar."}
 
 
 # ---------------------------------------------------------------------------
