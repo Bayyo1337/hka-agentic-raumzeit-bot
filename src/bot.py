@@ -5,7 +5,11 @@ Modularisiert: Routing und User-Interaktion.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+import sys
+import os
+import json
+import litellm
+from datetime import datetime, timedelta, time as _time
 
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import NetworkError
@@ -21,14 +25,31 @@ from src import terminal
 from src.formatter import CONFIRM_SENTINEL
 from src.state import _maintenance, _personal_features, _map_feature
 
+# Daemon-Erkennung
+IS_DAEMON = not sys.stdout.isatty() or os.environ.get("RUN_AS_DAEMON") == "1"
+
+# Watchdog State
+_consecutive_network_errors = 0
+NETWORK_ERROR_THRESHOLD = 15  # Nach 15 Fehlern in Folge Neustart erzwingen
+
 # Logging Setup
 from rich.logging import RichHandler
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(rich_tracebacks=True, console=terminal.console, show_path=False)]
-)
+
+if IS_DAEMON:
+    # Standard-Logging für Systemd (sauber ohne ANSI-Farben)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
+else:
+    # Rich-Logging für interaktive Nutzung
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(rich_tracebacks=True, console=terminal.console, show_path=False)]
+    )
 
 def set_log_level(level_name: str) -> bool:
     """Ändert das Log-Level aller relevanten Logger zur Laufzeit."""
@@ -103,6 +124,7 @@ def _command_help(is_admin: bool) -> str:
             "/admin – Volle System-Übersicht",
             "/sync – Kurs- und Dozenten-Daten neu laden",
             "/togglepersonal – /setcourse Feature an/aus",
+            "/togglemap – /togglemap Feature an/aus",
             "/loglevel <level> – Debug-Modus steuern",
             "/broadcast <text> – Nachricht an alle senden",
         ]
@@ -124,7 +146,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• Wo ist das Gebäude LI?\n"
         "• Zeig mir den Stundenplan von MABB Semester 7\n\n"
         + _command_help(is_admin)
-        + "\n\n📄 [Quellcode (AGPL-3.0)](https://github.com/Bayyo1337/hka-agentic-raumzeit-bot)"
     )
     msg = await update.message.reply_text(text, parse_mode="Markdown")
     _bot_messages.setdefault(update.effective_chat.id, []).append(msg.message_id)
@@ -152,21 +173,35 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     history = await db.load_history(update.effective_chat.id)
     history_len = len(history) // 2
     remaining = (limit - recent) if limit > 0 else "∞"
-    course_str = f"\nKurs: {u['primary_course']}" if u and u.get("primary_course") else ""
+    
+    course_raw = u.get("primary_course") if u else None
+    import json
+    try:
+        courses = json.loads(course_raw) if course_raw else []
+        if not isinstance(courses, list): courses = [str(courses)]
+    except:
+        courses = [course_raw] if course_raw else []
+    
+    course_str = f"\n🎓 *Deine Kurse:* {', '.join([f'`{c}`' for c in courses])}" if courses else "\n🎓 *Deine Kurse:* Noch keine (nutze /setcourse)"
     
     await update.message.reply_text(
-        f"📊 Deine Statistik{course_str}\n"
-        f"Anfragen letzte Stunde: {recent}/{limit if limit else '∞'}\n"
-        f"Noch verfügbar: {remaining}\nGesamt: {total} Anfragen\n"
-        f"Tokens: {tok_in + tok_out:,}\nGesprächsverlauf: {history_len} Austausch(e)"
+        f"📊 *Deine Statistik*{course_str}\n"
+        f"Anfragen letzte Stunde: `{recent}/{limit if limit else '∞'}`\n"
+        f"Noch verfügbar: `{remaining}`\nGesamt: `{total}` Anfragen\n"
+        f"Tokens: `{tok_in + tok_out:,}`\nGesprächsverlauf: `{history_len}` Austausch(e)",
+        parse_mode="Markdown"
     )
 
 
 async def cmd_setcourse(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Interaktiver Assistent zum Festlegen des eigenen Studiengangs."""
+    """Interaktiver Assistent zum Festlegen des eigenen Studiengangs (Multi-Select)."""
     if not _personal_features[0]:
         await update.message.reply_text("💡 Dieses Feature ist aktuell deaktiviert.")
         return
+    await _show_faculty_selection(update.message.reply_text)
+
+
+async def _show_faculty_selection(reply_func, text_prefix=""):
     try:
         faculties = await raumzeit.get_departments()
         keyboard = []
@@ -174,11 +209,15 @@ async def cmd_setcourse(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             name = f.get("name") or f.get("shortName", "Unknown")
             keyboard.append([InlineKeyboardButton(name, callback_data=f"setc_fac:{f['id']}")])
         
+        keyboard.append([InlineKeyboardButton("❌ Abbrechen / Beenden", callback_data="setc_abort")])
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("Wähle deine Fakultät:", reply_markup=reply_markup)
+        await reply_func(
+            f"{text_prefix}*Schritt 1 von 3:* Wähle eine Fakultät zum Hinzufügen:", 
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
     except Exception as e:
-        log.exception("Fehler in cmd_setcourse")
-        await update.message.reply_text(f"⚠️ Fehler beim Laden der Fakultäten: {e}")
+        await reply_func(f"⚠️ Fehler: {e}")
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -186,23 +225,28 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     query = update.callback_query
     await query.answer()
     
+    data = query.data
+    user_id = update.effective_user.id
+
+    if data == "setc_abort":
+        await query.edit_message_text("✅ Vorgang beendet. Deine bisherigen Einstellungen (falls vorhanden) bleiben gespeichert.")
+        return
+
     if not _personal_features[0]:
         await query.edit_message_text("💡 Dieses Feature wurde deaktiviert.")
         return
-
-    data = query.data
 
     if data.startswith("setc_fac:"):
         fac_id = data.split(":")[1]
         try:
             courses = await raumzeit.get_courses_of_study(fac_id)
-            keyboard = []
-            for c in courses:
-                name = c.get("name") or c.get("shortName", "Unknown")
-                keyboard.append([InlineKeyboardButton(name, callback_data=f"setc_deg:{c['name']}")])
-            
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text("Wähle deinen Studiengang:", reply_markup=reply_markup)
+            keyboard = [[InlineKeyboardButton(c["name"], callback_data=f"setc_deg:{c['name']}")] for c in courses]
+            keyboard.append([InlineKeyboardButton("⬅️ Zurück", callback_data="setc_more")])
+            await query.edit_message_text(
+                "*Schritt 2 von 3:* Wähle deinen Studiengang:", 
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
         except Exception as e:
             await query.edit_message_text(f"⚠️ Fehler: {e}")
 
@@ -210,18 +254,49 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         deg_abbr = data.split(":")[1]
         keyboard = []
         for i in range(1, 8, 2):
-            row = [InlineKeyboardButton(f"Sem. {i}", callback_data=f"setc_fin:{deg_abbr}.{i}")]
+            row = [InlineKeyboardButton(f"Sem. {i}", callback_data=f"setc_add:{deg_abbr}.{i}")]
             if i + 1 <= 7:
-                row.append(InlineKeyboardButton(f"Sem. {i+1}", callback_data=f"setc_fin:{deg_abbr}.{i+1}"))
+                row.append(InlineKeyboardButton(f"Sem. {i+1}", callback_data=f"setc_add:{deg_abbr}.{i+1}"))
             keyboard.append(row)
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(f"Welches Semester ({deg_abbr})?", reply_markup=reply_markup)
+        keyboard.append([InlineKeyboardButton("⬅️ Zurück zur Fakultät", callback_data="setc_more")])
+        await query.edit_message_text(
+            f"*Schritt 3 von 3:* Welches Semester für *{deg_abbr}*?", 
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
 
-    elif data.startswith("setc_fin:"):
+    elif data.startswith("setc_add:"):
         full_key = data.split(":")[1]
-        await db.set_primary_course(update.effective_user.id, full_key)
-        await query.edit_message_text(f"✅ Dein Stundenplan wurde auf *{full_key}* gesetzt.", parse_mode="Markdown")
+        await db.add_primary_course(user_id, full_key)
+        u = await db.get_user(user_id)
+        import json
+        try:
+            courses = json.loads(u["primary_course"]) if u["primary_course"] else []
+            if not isinstance(courses, list): courses = [str(courses)]
+        except:
+            courses = [u["primary_course"]] if u["primary_course"] else []
+        
+        course_list = ", ".join(f"`{c}`" for c in courses)
+        keyboard = [
+            [InlineKeyboardButton("➕ Weiteres Semester hinzufügen", callback_data="setc_more")],
+            [InlineKeyboardButton("✅ Fertig & Speichern", callback_data="setc_done")],
+            [InlineKeyboardButton("🗑 Alle löschen & neu starten", callback_data="setc_clear")]
+        ]
+        await query.edit_message_text(
+            f"✨ *Stundenplan konfiguriert*\n\nAktuell ausgewählt: {course_list}\n\nMöchtest du noch ein Semester hinzufügen oder bist du fertig?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+
+    elif data == "setc_more":
+        await _show_faculty_selection(query.edit_message_text)
+    
+    elif data == "setc_done":
+        await query.edit_message_text("✅ Deine Einstellungen wurden gespeichert. Du kannst mich nun jederzeit fragen: 'Was habe ich heute?'.")
+
+    elif data == "setc_clear":
+        await db.set_primary_courses(user_id, [])
+        await _show_faculty_selection(query.edit_message_text, "🗑 Liste geleert.\n\n")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -342,11 +417,34 @@ async def _run_lecturer_build():
 async def _weekly_lecturer_refresh():
     while True: await asyncio.sleep(7*24*3600); await _run_lecturer_build()
 
+async def _background_sync_scheduler():
+    """Führt jede Nacht um 04:00 Uhr einen Sync aus."""
+    while True:
+        now = datetime.now()
+        target = datetime.combine(now.date(), _time(4, 0))
+        if target <= now:
+            target += timedelta(days=1)
+        
+        wait_seconds = (target - now).total_seconds()
+        log.info("Nächster automatischer Sync um 04:00 Uhr (in %.1f Stunden)", wait_seconds / 3600)
+        await asyncio.sleep(wait_seconds)
+        
+        log.info("Starte nächtlichen automatischen Sync...")
+        await _run_index_build()
+        await _run_lecturer_build()
+
 async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Loggt Fehler, die während der Verarbeitung von Telegram-Updates auftreten."""
+    """Loggt Fehler und beendet den Prozess bei zu vielen Netzwerkfehlern."""
+    global _consecutive_network_errors
     if isinstance(context.error, NetworkError):
-        log.warning("Telegram Netzwerkfehler: %s", context.error)
+        _consecutive_network_errors += 1
+        log.warning("Telegram Netzwerkfehler (%d/%d): %s", 
+                    _consecutive_network_errors, NETWORK_ERROR_THRESHOLD, context.error)
+        if _consecutive_network_errors >= NETWORK_ERROR_THRESHOLD:
+            log.critical("Zu viele Netzwerkfehler. Beende Bot für Systemd-Restart...")
+            os._exit(1) # Harter Exit für sofortigen Restart
     else:
+        _consecutive_network_errors = 0
         log.exception("Unbehandelter Fehler in Bot-Logik", exc_info=context.error)
 
 async def _post_init(app) -> None:
@@ -356,13 +454,12 @@ async def _post_init(app) -> None:
         try: await app.bot.set_my_commands(_ADMIN_COMMANDS, scope={"type": "chat", "chat_id": aid})
         except: pass
     if await db.course_index_stale(): asyncio.create_task(_run_index_build())
+    if raumzeit.lecturers_stale(): asyncio.create_task(_run_lecturer_build())
+    else: raumzeit.load_lecturers()
     
-    # Dozenten-Index immer erst laden, dann bei Bedarf im Hintergrund updaten
-    raumzeit.load_lecturers()
-    if raumzeit.lecturers_stale(): 
-        asyncio.create_task(_run_lecturer_build())
-    
+    # Hintergrund-Tasks starten
     asyncio.create_task(_weekly_lecturer_refresh())
+    asyncio.create_task(_background_sync_scheduler())
 
 async def main_async() -> None:
     app = ApplicationBuilder().token(settings.telegram_bot_token).post_init(_post_init).build()
@@ -397,13 +494,17 @@ async def main_async() -> None:
     app.add_error_handler(_error_handler)
 
     await app.initialize(); await app.start(); await app.updater.start_polling()
-    stop_event = asyncio.Event()
     
-    # Dashboard einmalig beim Start anzeigen
-    terminal.console.print(terminal.make_dashboard())
-    
-    # Interaktive Konsole starten (ohne Live-Update, da input() blockiert)
-    await terminal.terminal_loop(app, stop_event)
+    if not IS_DAEMON:
+        # Dashboard nur im interaktiven Modus
+        terminal.console.print(terminal.make_dashboard())
+        stop_event = asyncio.Event()
+        await terminal.terminal_loop(app, stop_event)
+    else:
+        log.info("Bot läuft im Daemon-Modus (Hintergrund).")
+        # Im Daemon-Modus einfach unendlich warten
+        while True:
+            await asyncio.sleep(3600)
     
     await app.updater.stop(); await app.stop(); await app.shutdown()
 
