@@ -188,7 +188,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"📊 *Deine Statistik*{course_str}\n"
         f"Anfragen letzte Stunde: `{recent}/{limit if limit else '∞'}`\n"
         f"Noch verfügbar: `{remaining}`\nGesamt: `{total}` Anfragen\n"
-        f"Tokens: `{tok_in + tok_out:,}`\nGesprächsverlauf: `{history_len}` Austausch(e)",
+        f"Tokens: `{tok_in + tok_out:,}`\nGesprächsverlauf: `{history_len} Austausch(e)`",
         parse_mode="Markdown"
     )
 
