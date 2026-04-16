@@ -51,7 +51,7 @@ def _dedup_bookings(bookings: list[dict]) -> list[dict]:
     
     import re
     def _norm_mod(m: str) -> str:
-        return re.sub(r'[^a-z0-9]', '', m.lower())
+        return re.sub(r'[^a-z0-9]', '', str(m).lower())
         
     for b in bookings:
         start = _to_hhmm(b.get("start", ""))
@@ -60,13 +60,15 @@ def _dedup_bookings(bookings: list[dict]) -> list[dict]:
         name = b.get("name", "")
         module = b.get("module", "")
         lecturer = b.get("lecturer", "")
+        date_str = b.get("date", "")
         
         found = False
         for m in merged:
             m_start = _to_hhmm(m.get("start", ""))
             m_end = _to_hhmm(m.get("end", ""))
             m_room = m.get("room", "")
-            if m_start == start and m_end == end and m_room == room:
+            m_date = m.get("date", "")
+            if m_start == start and m_end == end and m_room == room and m_date == date_str:
                 # Prüfen, ob Dozent gleich ist ODER Modulname sehr ähnlich
                 if (lecturer and m.get("lecturer") == lecturer) or \
                    (module and _norm_mod(module) in _norm_mod(m.get("module", ""))) or \
@@ -76,7 +78,6 @@ def _dedup_bookings(bookings: list[dict]) -> list[dict]:
                     if name not in names:
                         names.append(name)
                         m["name"] = ", ".join(names)
-                    # Nimm den Modulnamen, der aussagekräftiger aussieht (den längeren)
                     if len(module) > len(m.get("module", "")):
                         m["module"] = module
                     found = True
@@ -126,7 +127,6 @@ def _render_timeline(bookings: list[dict], day_label: str = "", header_prefix: s
     sorted_bookings = sorted(_dedup_bookings(bookings), key=lambda b: _time_to_minutes(_to_hhmm(b.get("start", ""))))
 
     if not sorted_bookings:
-        # Wochenende prüfen für spezifische Meldung
         if day_label:
             if "Sa" in day_label or "Samstag" in day_label:
                 lines.append("Am Samstag finden keine Vorlesungen statt.")
@@ -142,18 +142,15 @@ def _render_timeline(bookings: list[dict], day_label: str = "", header_prefix: s
         start_min = _time_to_minutes(_to_hhmm(b.get("start", "")))
         end_min = _time_to_minutes(_to_hhmm(b.get("end", "")))
 
-        # Freien Slot einfügen
         if start_min > current_time:
             lines.append(f"🟢 {_minutes_to_hhmm(current_time)}–{_minutes_to_hhmm(start_min)} frei")
         
-        # Belegung anzeigen
         course_code = b.get("name", "")
         module = b.get("module", "")
         lecturer = b.get("lecturer", "")
         room = b.get("room", "")
         cancelled = b.get("cancelled", False)
         
-        # Keywords im Namen prüfen
         name_lower = f"{course_code} {module}".lower()
         if "fällt aus" in name_lower or "entfällt" in name_lower or "canceled" in name_lower:
             cancelled = True
@@ -162,12 +159,21 @@ def _render_timeline(bookings: list[dict], day_label: str = "", header_prefix: s
             label = f"*({course_code})* {module}"
         else:
             label = f"*{course_code}*"
-            
+
         if lecturer:
-            label += f" ({lecturer})"
+            from src.tools import _LECTURERS
+            resolved = []
+            for k in str(lecturer).split(", "):
+                k = k.strip()
+                if k in _LECTURERS:
+                    resolved.append(_LECTURERS[k].get("name", k))
+                else:
+                    resolved.append(k)
+            label += f" ({', '.join(resolved)})"
+
         if room and not header_prefix.startswith("🏫"):
-            label += f" 🏫 {room}"
-            
+            label += f" 🏫 {room}"            
+
         time_range = f"{_to_hhmm(b.get('start', ''))}–{_to_hhmm(b.get('end', ''))}"
         if cancelled:
             lines.append(f"❌ ~{time_range} {label}~ (FÄLLT AUS)")
@@ -194,7 +200,6 @@ def _fmt_room(result: dict) -> str:
         date_label = _fmt_date(queried_date) if queried_date and queried_date != "aktuelle Woche" else queried_date
         return f"🏫 *{room}*" + (f" – {date_label}" if date_label else "") + "\n✅ Keine Belegungen gefunden (möglicherweise frei)"
 
-    # Gruppiere nach Tag
     from collections import defaultdict
     by_day: dict[str, list] = defaultdict(list)
     for b in bookings:
@@ -204,7 +209,6 @@ def _fmt_room(result: dict) -> str:
     sorted_days = sorted(by_day.keys(), key=lambda d: _day_order.get(d, 99))
 
     all_lines = []
-    # Bei leerem Ergebnis mit Note (z.B. API-Problem an Freitagen)
     if not sorted_days and result.get("note"):
         date_label = _fmt_date(queried_date) if queried_date and queried_date != "aktuelle Woche" else queried_date
         return f"🏫 *{room}*" + (f" – {date_label}" if date_label else "") + f"\n✅ Keine Belegungen gefunden.\n_{result['note']}_"
@@ -221,7 +225,6 @@ def _fmt_room(result: dict) -> str:
 
 
 def _fmt_room_multi(results: list[dict]) -> str:
-    """Mehrere Tage für denselben Raum."""
     parts = []
     for r in results:
         parts.append(_fmt_room(r))
@@ -241,7 +244,6 @@ def _fmt_course(result: dict) -> str:
         base = f"📅 *{course}*: Keine Einträge" + (f" für {date_label}" if date_label else "") + "."
         return base + "\n\n" + CONFIRM_SENTINEL
 
-    # Gruppiere nach Datum → Gruppe
     from collections import defaultdict
     by_date: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
     for b in bookings:
@@ -277,12 +279,22 @@ def _fmt_lecturer(result: dict) -> str:
     lecturer = result.get("lecturer", "?")
     bookings = result.get("bookings", [])
     queried_date = result.get("queried_date", "")
+    email = result.get("email")
+    sprechzeit = result.get("sprechzeit")
+
+    date_label = _fmt_date(queried_date) if queried_date and queried_date != "heute" else queried_date
+    header = f"👤 *Stundenplan {lecturer}*" + (f" – {date_label}" if date_label else "")
+    
+    lines = [header]
+    if email or sprechzeit:
+        if email: lines.append(f"📧 {email}")
+        if sprechzeit: lines.append(f"🕒 *Sprechzeit:* {sprechzeit}")
+        lines.append("")
 
     if not bookings:
-        date_label = _fmt_date(queried_date) if queried_date and queried_date != "heute" else queried_date
-        return f"👤 *Stundenplan {lecturer}*" + (f" – {date_label}" if date_label else "") + "\nKeine Einträge für heute gefunden. An welchem Tag suchst du?"
+        lines.append("Keine Einträge für heute gefunden. An welchem Tag suchst du?")
+        return "\n".join(lines)
 
-    # Gruppiere nach Tag → Raum
     from collections import defaultdict
     by_day_room: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
     for b in bookings:
@@ -301,35 +313,46 @@ def _fmt_lecturer(result: dict) -> str:
 
     all_lines = []
     total_days = len(sorted_days)
-    
     for day in sorted_days:
         rooms_on_day = by_day_room[day]
         for room in sorted(rooms_on_day.keys()):
             date_label = _fmt_date(queried_date) if total_days == 1 and queried_date and queried_date != "heute" else day
-            # WICHTIG: _dedup_bookings hier aufrufen
             deduplicated = _dedup_bookings(rooms_on_day[room])
             all_lines.extend(_render_timeline(deduplicated, date_label, f"🏫 *{room}*"))
-            all_lines.append("") # Leerzeile zwischen Räumen/Tagen
+            all_lines.append("")
 
     return "\n".join(all_lines).strip()
+
+
+def _fmt_lecturer_info(result: dict) -> str:
+    if "error" in result:
+        return f"❌ {result['error']}"
+    
+    name = result.get("name", "?")
+    email = result.get("email")
+    sprechzeit = result.get("sprechzeit")
+    
+    lines = [f"👤 *Dozenten-Info: {name}*"]
+    if email: lines.append(f"📧 E-Mail: {email}")
+    if sprechzeit: lines.append(f"🕒 Sprechzeit: {sprechzeit}")
+    if not email and not sprechzeit:
+        lines.append("Keine Kontaktinformationen hinterlegt.")
+    return "\n".join(lines)
 
 
 def _fmt_map(result: dict) -> str:
     building = result.get("building", "?")
     floor = result.get("floor", "unbekanntes Stockwerk")
     query = result.get("query", building)
-    
     return f"📍 *Lageplan für {query}*\n\nDas Gebäude *{building}* befindet sich auf dem Hauptcampus.\nEbene: *{floor}*"
 
 
 def _fmt_list(result) -> str:
     if isinstance(result, dict) and "error" in result:
         return f"❌ {result['error']}"
-
     items = result if isinstance(result, list) else []
     if not items:
         return "Keine Einträge gefunden."
-
     lines = []
     for item in items[:30]:
         if isinstance(item, dict):
@@ -341,10 +364,8 @@ def _fmt_list(result) -> str:
                 lines.append(f"• {name}")
         else:
             lines.append(f"• {item}")
-
     if len(items) > 30:
         lines.append(f"… und {len(items) - 30} weitere")
-
     return "\n".join(lines)
 
 
@@ -352,25 +373,20 @@ def _fmt_calendar(result) -> str:
     items = result if isinstance(result, list) else []
     if not items:
         return "Kein Hochschulkalender verfügbar."
-
     lines = ["📆 *Hochschulkalender*"]
     for item in items[:20]:
-        if not isinstance(item, dict):
-            continue
+        if not isinstance(item, dict): continue
         name = item.get("name", item.get("title", ""))
         start = item.get("start", item.get("startDate", ""))
         end = item.get("end", item.get("endDate", ""))
-        if start:
-            start = _fmt_date(start[:10]) if len(start) >= 10 else start
-        if end:
-            end = _fmt_date(end[:10]) if len(end) >= 10 else end
+        if start: start = _fmt_date(start[:10]) if len(start) >= 10 else start
+        if end: end = _fmt_date(end[:10]) if len(end) >= 10 else end
         if start and end and start != end:
             lines.append(f"• {name}: {start} – {end}")
         elif start:
             lines.append(f"• {name}: {start}")
         else:
             lines.append(f"• {name}")
-
     return "\n".join(lines)
 
 
@@ -380,6 +396,7 @@ _FORMATTERS = {
     "get_room_timetable":      _fmt_room,
     "get_course_timetable":    _fmt_course,
     "get_lecturer_timetable":  _fmt_lecturer,
+    "get_lecturer_info":       _fmt_lecturer_info,
     "get_university_calendar": _fmt_calendar,
     "get_campus_map":          _fmt_map,
     "get_departments":         _fmt_list,
@@ -389,31 +406,16 @@ _FORMATTERS = {
 
 
 def format_results(collected: list[tuple[str, dict]], user_message: str) -> str:
-    """
-    Formatiert alle gesammelten Tool-Ergebnisse zu einer Telegram-Antwort.
-
-    Logik:
-    - Mehrere get_room_timetable-Calls (Mehrtagesabfrage) → kombiniert
-    - Lookup-Tools (get_courses_of_study etc.) werden nur angezeigt wenn es
-      das einzige Ergebnis ist
-    - Letztes Daten-Tool gewinnt bei gemischten Calls
-    """
     if not collected:
         return "Ich konnte keine Daten abrufen. Bitte versuche es erneut."
-
-    # Mehrere room_timetable-Calls zusammenfassen
     room_calls = [(n, r) for n, r in collected if n == "get_room_timetable"]
     if len(room_calls) > 1:
         return _fmt_room_multi([r for _, r in room_calls])
-
-    # Letztes Nicht-Lookup-Tool bevorzugen
     data_calls = [(n, r) for n, r in collected if n not in _LOOKUP_TOOLS]
     if data_calls:
         name, result = data_calls[-1]
         fmt = _FORMATTERS.get(name)
         return fmt(result) if fmt else str(result)
-
-    # Fallback: letztes Tool egal welches
     name, result = collected[-1]
     fmt = _FORMATTERS.get(name)
     return fmt(result) if fmt else str(result)

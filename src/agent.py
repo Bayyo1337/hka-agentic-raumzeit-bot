@@ -42,6 +42,7 @@ Verfügbare Tools:
 - get_room_timetable: room_name (z.B. "M-102"), date (YYYY-MM-DD, optional)
 - get_course_timetable: course_key ("KÜRZEL.SEMESTER", z.B. "MABB.6"), date (YYYY-MM-DD, optional)
 - get_lecturer_timetable: account (vollständiger Name z.B. "Masha Taheran", Nachname z.B. "Taheran", oder Kürzel z.B. "tama0001"), date (YYYY-MM-DD, optional)
+- get_lecturer_info: account (Name oder Kürzel) - NUTZE DIES NUR FÜR KONTAKTINFOS (E-Mail, Sprechzeit).
 - get_all_rooms: keine Parameter
 - get_departments: keine Parameter
 - get_courses_of_study: faculty_id (optional)

@@ -131,7 +131,7 @@ async def build_lecturer_index() -> int:
 
     # 2. HKA-Personenliste scrapen
     HKA_BASE = "https://www.h-ka.de"
-    persons: list[dict] = []  # [{name, vorname, nachname, email}]
+    persons: list[dict] = []  # [{name, email, url}]
     page = 1
     async with httpx.AsyncClient(base_url=HKA_BASE, timeout=20, follow_redirects=True) as c:
         while True:
@@ -142,45 +142,64 @@ async def build_lecturer_index() -> int:
             if r.status_code != 200: break
             
             import re as _re
-            # 1. Versuche Tabellen-Struktur (Standard-A-Z Liste)
-            pattern_table = r'<span class="person__user-academic-title">(.*?)</span>.*?([\w.\-]+)<span[^>]*>spam prevention</span>@h-ka\.de'
-            matches = _re.findall(pattern_table, r.text, _re.DOTALL)
-            
-            # 2. Versuche Div-Struktur (Solr Suchergebnisse)
-            if not matches:
-                pattern_solr = r'<h3[^>]*>.*?<a[^>]*>(.*?)</a>.*?([\w.\-]+)<span[^>]*>spam prevention</span>@h-ka\.de'
-                matches = _re.findall(pattern_solr, r.text, _re.DOTALL)
-            
-            for name, username in matches:
-                full_name = _re.sub(r'\s+', ' ', name).strip()
-                parts = username.split(".")
-                if len(parts) >= 2:
-                    persons.append({
-                        "name": full_name,
-                        "vorname": parts[0],
-                        "nachname": parts[-1],
-                        "email": f"{username}@h-ka.de"
-                    })
+            # Wir suchen nach den Zeilen-Blöcken (TR), um URL, Name und Email zusammenhängend zu finden
+            # Pattern für TR mit data-document-url
+            tr_pattern = r'<tr[^>]*data-document-url="(.*?)"[^>]*>.*?<span class="person__user-academic-title">(.*?)</span>.*?([\w.\-]+)<span[^>]*>spam prevention</span>@h-ka\.de'
+            for p_url, p_name, p_mail_user in _re.findall(tr_pattern, r.text, _re.DOTALL):
+                name = _re.sub(r'\s+', ' ', p_name).strip()
+                persons.append({
+                    "name": name,
+                    "vorname": p_mail_user.split(".")[0],
+                    "nachname": p_mail_user.split(".")[-1],
+                    "email": f"{p_mail_user}@h-ka.de",
+                    "url": p_url
+                })
             
             if f"page={page + 1}" not in r.text and f"page%5D={page + 1}" not in r.text:
                 break
             page += 1
     log.info("Dozenten-Index: %d Personen von h-ka.de geladen", len(persons))
 
-    # 3. Matchen
+    # 3. Matchen & Sprechzeiten scrapen
     matched: dict[str, dict] = {}
+    to_scrape: list[tuple[str, str]] = [] # [(kuerzel, url)]
+
     for p in persons:
-        # Standard-Kürzel: na+vo+0001 (z.B. tama0001)
         prefix = _norm2ch(p["nachname"]) + _norm2ch(p["vorname"])
-        # Erweiterte Heuristik: manche Kürzel nutzen mehr vom Nachnamen
         alt_prefix = _norm(p["nachname"])[:4]
         
         for num in range(1, 21):
+            found = False
             for pre in [prefix, alt_prefix]:
                 kuerzel = f"{pre}{num:04d}"
                 if kuerzel in known:
                     matched[kuerzel] = {"name": p["name"], "email": p["email"]}
+                    if p.get("url"):
+                        to_scrape.append((kuerzel, p["url"]))
+                    found = True
                     break
+            if found: break
+
+    # Sprechzeiten asynchron laden (mit Batching um Server zu schonen)
+    if to_scrape:
+        log.info("Dozenten-Index: Scrape Sprechzeiten für %d Dozenten...", len(to_scrape))
+        async def _fetch_sprechzeit(kuerzel: str, profile_url: str):
+            try:
+                async with httpx.AsyncClient(base_url=HKA_BASE, timeout=10) as c:
+                    r = await c.get(profile_url, headers={"User-Agent": "Mozilla/5.0"})
+                if r.status_code == 200:
+                    import re as _re
+                    # Suche nach Sprechzeiten-Block
+                    # <p>Sprechzeiten:<br/>...</p>
+                    match = _re.search(r'Sprechzeiten\s*:\s*<br/>\s*(.*?)\s*</p>', r.text, _re.DOTALL | _re.IGNORECASE)
+                    if match:
+                        text = _re.sub(r'<[^>]*>', ' ', match.group(1)).strip()
+                        matched[kuerzel]["sprechzeit"] = _re.sub(r'\s+', ' ', text)
+            except Exception: pass
+
+        for i in range(0, len(to_scrape), 20):
+            await asyncio.gather(*[_fetch_sprechzeit(k, u) for k, u in to_scrape[i:i + 20]])
+            await asyncio.sleep(0.5) # Kurze Pause zwischen Batches
 
     # 4. Bestehende manuelle Einträge erhalten
     try:
@@ -654,6 +673,8 @@ async def get_lecturer_timetable(account: str, date: str | None = None) -> dict:
     if full_name is None and not re.fullmatch(r"[a-z]{4}\d{4}", kuerzel.lower()):
         return {"error": f"Dozent '{account}' nicht gefunden. Bitte Name oder Kürzel (z.B. 'tama0001') angeben. Tipp: /sync ausführen um die Dozenten-Liste zu aktualisieren."}
 
+    info = _LECTURERS.get(kuerzel, {})
+    
     token = await _get_token()
     async with _client(token) as c:
         log.debug("API → GET /timetables/lecturer/%s", kuerzel)
@@ -666,8 +687,24 @@ async def get_lecturer_timetable(account: str, date: str | None = None) -> dict:
     bookings = _parse_ical(r.text, filter_date=date)
     return {
         "lecturer": full_name or kuerzel,
+        "email": info.get("email"),
+        "sprechzeit": info.get("sprechzeit"),
         "bookings": bookings,
         "queried_date": date or "heute"
+    }
+
+
+async def get_lecturer_info(account: str) -> dict:
+    """Gibt nur die Kontaktinformationen eines Dozenten zurück."""
+    kuerzel, full_name = resolve_lecturer(account)
+    if full_name is None:
+        return {"error": f"Dozent '{account}' nicht gefunden."}
+    
+    info = _LECTURERS.get(kuerzel, {})
+    return {
+        "name": full_name,
+        "email": info.get("email"),
+        "sprechzeit": info.get("sprechzeit")
     }
 
 
@@ -929,6 +966,20 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "get_lecturer_info",
+            "description": "Gibt Kontaktinformationen (E-Mail, Sprechzeiten) eines Dozenten zurück.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "account": {"type": "string", "description": "Name oder Kürzel des Dozenten."}
+                },
+                "required": ["account"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_departments",
             "description": "Listet alle Departments/Fakultäten der Hochschule.",
             "parameters": {"type": "object", "properties": {}, "required": []},
@@ -984,6 +1035,7 @@ TOOL_HANDLERS = {
     "get_room_timetable":      lambda inp: get_room_timetable(inp["room_name"], inp.get("date")),
     "get_course_timetable":    lambda inp: get_course_timetable(inp["course_semester"], inp.get("date")),
     "get_lecturer_timetable":  lambda inp: get_lecturer_timetable(inp["account"], inp.get("date")),
+    "get_lecturer_info":       lambda inp: get_lecturer_info(inp["account"]),
     "get_departments":         lambda inp: get_departments(),
     "get_courses_of_study":    lambda inp: get_courses_of_study(inp.get("faculty")),
     "get_university_calendar": lambda inp: get_university_calendar(),
