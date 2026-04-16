@@ -1,9 +1,9 @@
 # Vorbereitung für 24/7 Betrieb im Linux LXC (Prozessmanagement)
 
-Dieses Dokument fasst die wichtigsten Maßnahmen zusammen, um den Raumzeit KI-Agent stabil und wartungsarm als Dauerprozess (Daemon) in einem Linux-Container (LXC) oder auf einem Server zu betreiben.
+Dieses Dokument beschreibt die Maßnahmen, um den Raumzeit KI-Agent stabil und wartungsarm als Dauerprozess (Daemon) in einem Linux-Container (LXC) oder auf einem Server zu betreiben.
 
-## 1. Systemd-Service einrichten
-Um den Bot als Hintergrundprozess laufen zu lassen (ohne blockiertes Terminalfenster), empfiehlt sich die Nutzung von `systemd`. Dadurch startet der Bot nach einem Server-Neustart automatisch und wird bei Abstürzen (z.B. nach Netzwerkabbrüchen) neu gestartet.
+## 1. Systemd-Service einrichten (Empfohlen)
+Um den Bot als Hintergrundprozess laufen zu lassen, empfiehlt sich die Nutzung von `systemd`. Dadurch startet der Bot nach einem Server-Neustart automatisch und wird bei Abstürzen neu gestartet.
 
 **Vorgehen:**
 Eine Datei unter `/etc/systemd/system/raumzeit.service` anlegen:
@@ -23,7 +23,7 @@ Restart=always
 RestartSec=10
 # Deaktiviert gepuffertes Logging (Logs tauchen sofort auf)
 Environment=PYTHONUNBUFFERED=1
-# Teilt dem Bot mit, dass er als Daemon läuft
+# Teilt dem Bot mit, dass er als Daemon läuft (optional, wird meist autodetektiert)
 Environment=RUN_AS_DAEMON=1
 
 [Install]
@@ -36,35 +36,24 @@ WantedBy=multi-user.target
 *   `sudo systemctl start raumzeit.service`
 *   `sudo journalctl -u raumzeit.service -f` (Logs anzeigen)
 
-## 2. Automatischer Background-Sync
-Aktuell werden die Indizes für Kurse und Dozenten manuell (via `/sync` oder in der Konsole) aufgebaut. Im Dauerbetrieb sollte dies automatisiert geschehen.
+## 2. Automatischer Background-Sync ✅
+**Status: Implementiert.**
+Der Bot verfügt über einen internen Scheduler, der jede Nacht um **04:00 Uhr** automatisch einen vollständigen Abgleich der Kurs- und Dozentenindizes durchführt. Ein manueller Cronjob hierfür ist nicht mehr erforderlich.
 
-**To-Do:**
-*   Implementierung eines asynchronen Schedulers (z.B. `APScheduler` oder eine einfache `asyncio.sleep`-Schleife in `src/bot.py`).
-*   Tägliche Ausführung (z.B. nachts um 04:00 Uhr) von `build_lecturer_index()` und `save_course_index()`.
-
-## 3. Log-Formatierung (Daemon-Modus)
-Das aktuelle interaktive Dashboard (`rich.live.Live`) und die farbigen Logs (`RichHandler`) sind für die manuelle Terminal-Bedienung optimiert. Läuft der Bot als Systemd-Service, fluten die Escape-Sequenzen das `journalctl`.
-
-**To-Do:**
-*   Eine Abfrage in `src/bot.py` einbauen: `if not sys.stdout.isatty() or os.environ.get("RUN_AS_DAEMON"):`
-*   Wenn der Bot im Daemon-Modus läuft:
-    *   Verwendung des regulären `logging.StreamHandler` statt `RichHandler`.
-    *   Deaktivierung des Live-Dashboards und der `terminal_loop`.
+## 3. Log-Formatierung (Daemon-Modus) ✅
+**Status: Implementiert.**
+Der Bot erkennt automatisch, ob er in einem Terminal (`isatty`) oder als Hintergrunddienst läuft. Im Daemon-Modus wird das interaktive Rich-Dashboard deaktiviert und auf ein flaches, Systemd-kompatibles Log-Format umgeschaltet.
 
 ## 4. Datenbank-Backups (SQLite)
-Alle Nutzerdaten (Statistiken, Limits, Sperren, History) liegen in `data/bot.db`.
+Alle Nutzerdaten liegen in `data/bot.db`. Es wird empfohlen, einen Cronjob auf dem Host-System für tägliche Backups einzurichten:
 
-**To-Do:**
-*   Einrichtung eines Cronjobs auf dem Host-System für tägliche Backups:
-    ```bash
-    0 3 * * * sqlite3 /pfad/zum/bot/data/bot.db ".backup '/pfad/zum/bot/data/backup_$(date +\%F).db'"
-    ```
-*   Optional: Alte Backups automatisch löschen (z.B. nach 7 Tagen).
+```bash
+0 3 * * * sqlite3 /pfad/zum/bot/data/bot.db ".backup '/pfad/zum/bot/data/backup_$(date +\%F).db'"
+```
 
-## 5. Auto-Reconnect / Watchdog
-Bei längeren Netzwerkausfällen (z.B. Wartungsarbeiten am Hochschulnetz oder Problemen bei den Telegram-Servern) kann sich die Polling-Schleife aufhängen.
+## 5. Auto-Reconnect / Watchdog ✅
+**Status: Implementiert.**
+Ein interner Watchdog im `_error_handler` zählt aufeinanderfolgende Netzwerkfehler. Bei dauerhaften Verbindungsproblemen (z.B. 15 Fehler in Folge) beendet sich der Prozess selbst mit `sys.exit(1)`, um durch `systemd` einen sauberen Neustart zu erzwingen.
 
-**To-Do:**
-*   Den `_error_handler` in `src/bot.py` erweitern: Wenn gehäuft `NetworkError`s auftreten, sollte der Bot den Prozess mit `sys.exit(1)` beenden.
-*   Dadurch greift das `Restart=always` aus der Systemd-Unit (Punkt 1) und der Bot startet mit einer sauberen Verbindung neu.
+---
+*Stand: April 2026 – Der Bot ist vollständig für den 24/7 Betrieb optimiert.*

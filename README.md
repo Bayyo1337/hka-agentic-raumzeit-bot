@@ -21,25 +21,23 @@ Frag den Bot einfach so, wie du einen Kommilitonen fragen würdest:
 Ein intelligenter, geführter Multi-Step-Assistent erlaubt es dir, deinen eigenen Studiengang zu hinterlegen:
 *   **Multi-Select:** Speichere mehrere Semester gleichzeitig (z.B. aus dem 3. und 6. Semester).
 *   **Intelligenter Kontext:** Einmal eingestellt, weiß der Bot bei Fragen wie *"Was habe ich heute?"* automatisch, welcher Stundenplan gemeint ist.
-*   **Automatische Aggregation:** Bei Auswahl eines Hauptkurses (z.B. `MABB.7`) werden automatisch alle Untervarianten (`MABB.7DF`, `MABB.7.A` etc.) kombiniert.
+
+### 👤 Dozenten-Details & Kontakte
+Der Bot löst Dozenten-Kürzel automatisch in Klarnamen auf und bietet zusätzliche Informationen:
+*   **Kontakt-Info:** E-Mail-Adressen und Sprechzeiten werden direkt von der HKA-Webseite geladen.
+*   **Gezielte Abfrage:** *"Wie ist die E-Mail von Ahmadi?"* oder *"Wann hat Nils Ruf Sprechstunde?"*.
 
 ### 📍 Intelligente Campus-Karten
 Nie wieder verlaufen! Bei Fragen nach Orten sendet der Bot:
-*   Ein **hervorgehobenes Bild** der Campus-Karte, auf dem das gesuchte Gebäude rot eingekreist ist.
+*   Ein **final kalibriertes Bild** der Campus-Karte, auf dem das gesuchte Gebäude exakt rot eingekreist ist.
 *   Automatische **Stockwerks-Erkennung** (z.B. *"Raum 145 liegt im 1. Stock"*).
 
 ### ❌ Stornierungs-Erkennung
 Der Bot erkennt abgesagte Vorlesungen in der HKA-API und stellt diese in der Timeline deutlich **durchgestrichen** und mit einem ❌ markiert dar.
 
-### 📊 Admin Dashboard & CLI
-Für Betreiber bietet der Bot eine leistungsstarke Terminal-Oberfläche:
-*   **Live-Statistiken:** Echtzeit-Anzeige von Uptime, LLM-Provider und Log-Level.
-*   **Interaktive Konsole:** Steuerung via Terminal (`status`, `sync`, `loglevel`).
-*   **Stresstest-Tool:** Integriertes Tool zur Simulation von parallelen Nutzeranfragen inklusive automatischer Speicherung der Ergebnisse.
-
 ---
 
-## 🚀 Installation & Setup
+## 🛠️ Installation & Setup
 
 Wir empfehlen die Nutzung von [uv](https://github.com/astral-sh/uv).
 
@@ -55,7 +53,6 @@ Wir empfehlen die Nutzung von [uv](https://github.com/astral-sh/uv).
     ```
 
 3.  **Konfiguration (Onboarding):**
-    Starte den interaktiven Assistenten, um deine `.env` Datei zu erstellen:
     ```bash
     uv run python scripts/onboard.py
     ```
@@ -67,7 +64,16 @@ Wir empfehlen die Nutzung von [uv](https://github.com/astral-sh/uv).
 
 ---
 
-## 🛠️ Betrieb
+## 🛡️ Stabilität & 24/7 Betrieb
+
+Der Bot ist für den dauerhaften Einsatz auf Servern (LXC, Docker, Systemd) optimiert:
+*   **Daemon-Modus:** Erkennt automatisch, wenn er im Hintergrund läuft, und passt das Logging an (kein Dashboard-Spam in `journalctl`).
+*   **Nightly Sync:** Aktualisiert jede Nacht um 04:00 Uhr vollautomatisch alle Kurs- und Dozentendaten.
+*   **Network Watchdog:** Erkennt dauerhafte Verbindungsabbrüche zu Telegram und erzwingt einen sauberen Neustart via Systemd.
+
+---
+
+## 💻 Betrieb
 
 ### Bot starten
 ```bash
@@ -75,26 +81,23 @@ make run
 ```
 
 ### Befehle im Terminal
-*   `status`: Zeigt das Dashboard an.
-*   `sync`: Synchronisiert Kurse und Dozenten mit der HKA-API.
+*   `status`: Zeigt das interaktive Dashboard an (nur im Terminal-Modus).
+*   `sync`: Manueller Abgleich mit der HKA-API.
 *   `test run`: Führt die hinterlegten Stresstests aus.
-*   `loglevel debug|info`: Ändert die Detailtiefe der Logs zur Laufzeit.
 
 ### Befehle in Telegram
-*   `/start`: Einführung und Kurzhilfe.
-*   `/help`: Ausführliche Hilfe mit Beispielen.
-*   `/setcourse`: Deinen eigenen Stundenplan konfigurieren.
-*   `/stats`: Deine persönliche Nutzungsstatistik.
+*   `/start` | `/help`: Einführung und Hilfe.
+*   `/setcourse`: Dein Profil konfigurieren.
+*   `/stats`: Nutzungsstatistik & Tokens.
+*   `/togglemap` (Admin): Lagepläne an/aus schalten.
 
 ---
 
 ## 🧠 Architektur
 
-Der Bot trennt strikt zwischen **Absichtserkennung** und **Datenverarbeitung**:
-1.  **Intent-Extraction:** Das LLM parst die Nutzernachricht und gibt strukturiertes JSON zurück.
-2.  **Python-Execution:** Der Bot führt die API-Aufrufe asynchron und ggf. parallel aus.
-3.  **Smarte Formatierung:** Die Antwort wird rein in Python formatiert (spart Tokens und ist schneller).
-4.  **Caching:** JWT-Token und API-Abfragen werden intelligent gecacht, um die Last auf die HKA-Server zu minimieren.
+Der Bot trennt strikt zwischen **Absichtserkennung** (LLM) und **Datenverarbeitung** (Python). Dies spart Kosten, erhöht die Geschwindigkeit und sorgt für 100% datenschutzkonforme API-Abfragen.
+
+> **Hinweis für KI-Agenten:** Die Dateien `GEMINI.md` und `CLAUDE.md` enthalten spezifische Anweisungen für die Weiterentwicklung und sollten nur lokal verwendet werden.
 
 ---
-*Entwickelt für die Studierenden der HKA. Datenschutz steht an erster Stelle: Keine Speicherung von Passwörtern im Repository.*
+*Entwickelt für die Studierenden der HKA.*
