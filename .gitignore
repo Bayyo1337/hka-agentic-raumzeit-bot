@@ -8,3 +8,14 @@ dist/
 .pytest_cache/
 .ruff_cache/
 data/
+
+# KI-spezifische Dateien (nur lokal)
+.claude/
+CLAUDE.md
+GEMINI.md
+verbesserungen*.txt
+testrun*.txt
+scripts/debug_*.py
+scripts/find_meals.py
+scripts/search_near.py
+scripts/test_weekend.py
