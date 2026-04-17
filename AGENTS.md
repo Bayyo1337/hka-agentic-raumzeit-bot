@@ -26,7 +26,7 @@ gemini -i "BESCHREIBUNG DES PROBLEMS ODER WUNSCHES" --skill strategist
 4. Er ruft den **QA Reviewer** auf, um alles zu prüfen und zu committen.
 5. Du erhältst am Ende eine Erfolgsmeldung inkl. Commit-Hash.
 
-## 📂 Struktur & Artefakte (`.gemini_agents/`)
+## 📂 Struktur & Artefakte (`.gemini/`)
 
 - **`session_log.md`**: Die "Single Source of Truth". Hier protokollieren alle Agenten ihren Fortschritt und den Master-Plan.
 - **`prompts/`**: Enthält die Analysen (`problem.md`, `verbesserung.md`) und die temporären Spezialisten-Prompts.

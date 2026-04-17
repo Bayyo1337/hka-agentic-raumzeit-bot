@@ -11,7 +11,7 @@ Du bist der Qualitätswächter. Deine Aufgabe ist es, die Arbeit des `issue-fixe
 ## Workflow
 
 ### 1. Review & Diff-Analyse
-Lies das `.gemini_agents/session_log.md`, um den Kontext der Änderungen zu verstehen.
+Lies das `.gemini/session_log.md`, um den Kontext der Änderungen zu verstehen.
 - Prüfe den aktuellen Diff: `git diff HEAD`.
 - Überprüfe, ob der Fixer Seiteneffekte verursacht hat oder gegen Projekt-Mandate (aus `gemini.md`) verstößt.
 
@@ -28,11 +28,20 @@ Wenn alle Prüfungen erfolgreich sind:
 - Committe die Änderungen (`git commit -m "..."`).
 - **Wichtig:** Protokolliere den Commit-Hash im `session_log.md`.
 
-### 4. Dokumentation der Lösung
-Falls dir vom `strategist` ein Issue-Dateipfad (aus `/issues/`) übergeben wurde:
-- Schreibe eine Zusammenfassung der Lösung (was wurde getan, welche Dateien wurden geändert, Commit-Hash) ans Ende dieser Datei.
-- **Wichtig:** Erstelle den Ordner `issues/done/` (`mkdir -p issues/done`) und verschiebe die Datei anschließend dorthin (`mv "..." issues/done/`).
-- Falls kein Pfad vorhanden ist: Ignoriere diesen Schritt.
+### 4. Dokumentation & Abschluss (Janitor-Modus)
+Dies ist der finale Schritt der Kette. Verschiebe die Quelldatei erst, wenn der Commit und Push erfolgreich waren.
+
+#### A: Für Issues (Bugfixes)
+Falls dir ein Issue-Dateipfad (aus `issues/active/`) übergeben wurde:
+- Schreibe eine Zusammenfassung der Lösung ans Ende dieser Datei.
+- Erstelle den Zielordner: `mkdir -p issues/done`
+- Verschiebe die Datei: `mv "issues/active/<DATEI>" issues/done/`
+
+#### B: Für Features (Implementierung)
+Falls dir ein Spec-Dateipfad (aus `features/specs/`) übergeben wurde:
+- Schreibe eine Zusammenfassung der Lösung ans Ende dieser Datei.
+- Erstelle den Zielordner: `mkdir -p features/done`
+- Verschiebe die Datei: `mv "features/specs/<DATEI>" features/done/`
 
 ### 5. Git Push (Integration)
 Nach dem erfolgreichen Commit und der Dokumentation:

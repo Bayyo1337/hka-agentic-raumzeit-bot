@@ -1,6 +1,6 @@
 ---
 name: issue-planner
-description: Spezialisierter KI-Assistent für Software-Architektur und Problem-Analyse. Nutze diesen Skill, um Bugs zu analysieren oder Features zu planen und strukturierte Pläne in '.gemini_agents/prompts/' zu erstellen.
+description: Spezialisierter KI-Assistent für Software-Architektur und Problem-Analyse. Nutze diesen Skill, um Bugs zu analysieren oder Features zu planen und strukturierte Pläne in '.gemini/prompts/' zu erstellen.
 ---
 
 # Issue Planner Skill
@@ -20,7 +20,7 @@ Bevor du eine Lösung planst, erstelle ein minimales Python-Skript (z.B. `script
 Prüfe bei Event- oder Namensvergleichen, ob die radikale Normalisierung aus `gemini.md` angewendet werden muss (`re.sub(r'[^a-z0-9]', '', s.lower())`).
 
 ### 4. Dokumentation
-Erstelle `problem.md` oder `verbesserung.md` in `.gemini_agents/prompts/`.
+Erstelle `problem.md` oder `verbesserung.md` in `.gemini/prompts/`.
 
 ## Dokumenten-Struktur
 ```markdown

@@ -33,10 +33,11 @@ Du bist der autonome Projektmanager. Deine Aufgabe ist es, einen Nutzer-Prompt e
 gemini -p "Erstelle eine technische Spec für die Idee aus <IDEA_FILE>." --skill feature-planner -m gemini-3.1-pro --thinking-level medium
 ```
 
-#### Feature-Kette (Implementierung):
+#### Issue-Kette (Bugfixing):
 ```bash
-gemini -p "Implementiere das Feature basierend auf der Spec <SPEC_FILE>." --skill feature-implementer -m gemini-3.1-pro
-gemini -p "Prüfe das neue Feature aus <SPEC_FILE>, führe Tests aus und committe." --skill qa-reviewer -m gemini-3.1-flash
+gemini -i "Analysiere das Problem in <ISSUE_FILE> und erstelle einen Plan in .gemini/prompts/problem.md sowie ein Repro-Skript." --skill issue-planner
+gemini -i "Setze den Plan aus .gemini/prompts/problem.md um und verifiziere ihn mit dem Repro-Skript." --skill issue-fixer
+gemini -i "Prüfe den Fix im session_log.md und im git diff, führe finale Tests aus und committe die Änderungen." --skill qa-reviewer
 ```
 
 ### 3. Monitoring & Dokumentation
