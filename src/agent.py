@@ -208,30 +208,37 @@ async def run(user_message: str, history: list[dict], user_label: str = "", prim
         if not handler:
             return name, {"error": f"Unbekanntes Tool: {name}"}
         try:
-            return name, await handler(args)
+            res = await handler(args)
+            # Falls das Tool ein "erwartetes" Fehler-Dictionary zurückgibt
+            if isinstance(res, dict) and "error" in res:
+                log.warning("Tool '%s' meldet Fehler: %s", name, res["error"])
+            return name, res
         except Exception as exc:
-            log.exception("Tool '%s' fehlgeschlagen", name)
+            # Echter Programmfehler/Absturz
+            log.error("Tool '%s' abgestürzt: %s", name, exc)
             
-            # Bei kritischen Fehlern (wie NameError) Prompt und Debug-Info loggen
-            if isinstance(exc, (NameError, AttributeError, ImportError, TypeError)):
-                debug_data = {
-                    "timestamp": date.today().isoformat(),
-                    "user_message": user_message,
-                    "prompt": messages,
-                    "llm_raw_output": raw,
-                    "tool": name,
-                    "args": args,
-                    "error": str(exc)
-                }
-                try:
-                    os.makedirs("data/debug_logs", exist_ok=True)
-                    log_path = f"data/debug_logs/error_{name}_{date.today().isoformat()}.json"
-                    with open(log_path, "w", encoding="utf-8") as f:
-                        json.dump(debug_data, f, ensure_ascii=False, indent=2, default=str)
-                    log.info("Kritischer Fehler gespeichert unter: %s", log_path)
-                except: pass
+            import traceback
+            tb = traceback.format_exc()
+            
+            debug_data = {
+                "timestamp": date.today().isoformat(),
+                "user_message": user_message,
+                "prompt": messages,
+                "llm_raw_output": raw,
+                "tool": name,
+                "args": args,
+                "error": str(exc),
+                "traceback": tb
+            }
+            try:
+                os.makedirs("data/debug_logs", exist_ok=True)
+                log_path = f"data/debug_logs/crash_{name}_{date.today().isoformat()}.json"
+                with open(log_path, "w", encoding="utf-8") as f:
+                    json.dump(debug_data, f, ensure_ascii=False, indent=2, default=str)
+                log.info("Crash-Report gespeichert: %s", log_path)
+            except: pass
                 
-            return name, {"error": str(exc)}
+            return name, {"error": f"Interner Fehler im Tool {name}"}
 
     collected_results: list[tuple[str, dict]] = list(
         await asyncio.gather(*[_execute(c) for c in calls])

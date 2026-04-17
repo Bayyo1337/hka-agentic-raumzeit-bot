@@ -9,7 +9,9 @@ import sys
 import os
 import json
 import litellm
+import traceback
 from datetime import datetime, timedelta, time as _time
+from logging.handlers import RotatingFileHandler
 
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import NetworkError
@@ -35,12 +37,19 @@ NETWORK_ERROR_THRESHOLD = 15  # Nach 15 Fehlern in Folge Neustart erzwingen
 # Logging Setup
 from rich.logging import RichHandler
 
+# 1. File Logging (Detailed, Rotating)
+os.makedirs("data", exist_ok=True)
+file_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+file_handler = RotatingFileHandler("data/bot.log", maxBytes=5*1024*1024, backupCount=3, encoding="utf-8")
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(file_formatter)
+
 if IS_DAEMON:
     # Standard-Logging für Systemd (sauber ohne ANSI-Farben)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[logging.StreamHandler(sys.stdout)]
+        handlers=[logging.StreamHandler(sys.stdout), file_handler]
     )
 else:
     # Rich-Logging für interaktive Nutzung
@@ -48,7 +57,7 @@ else:
         level=logging.WARNING,
         format="%(message)s",
         datefmt="[%X]",
-        handlers=[RichHandler(rich_tracebacks=True, console=terminal.console, show_path=False)]
+        handlers=[RichHandler(rich_tracebacks=False, console=terminal.console, show_path=False), file_handler]
     )
 
 def set_log_level(level_name: str) -> bool:
@@ -446,7 +455,8 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
             os._exit(1) # Harter Exit für sofortigen Restart
     else:
         _consecutive_network_errors = 0
-        log.exception("Unbehandelter Fehler in Bot-Logik", exc_info=context.error)
+        # In der Konsole nur kurz, im Logfile (da DEBUG/INFO dort alles fängt) steht der Rest
+        log.error("Unbehandelter Fehler in Bot-Logik: %s (Details in data/bot.log)", context.error, exc_info=False)
 
 async def _post_init(app) -> None:
     await db.init()
