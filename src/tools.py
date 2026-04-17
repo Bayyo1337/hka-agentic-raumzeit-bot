@@ -849,12 +849,15 @@ async def resolve_course_name(query: str) -> tuple[str, str | None]:
         if _norm(c["name"]) == q:
             return c["name"], c["name"]
             
-    # Teil-Match auf Name
-    for c in courses:
-        # Manche Kurse haben 'shortName' oder 'description'?
-        # In der HKA API ist 'name' oft das Kürzel (z.B. MABB)
-        # Wir bräuchten eigentlich eine Liste der Klarnamen.
-        pass
+    # 2. Teil-Match auf 'longName' (Klarname)
+    # Wir sortieren Bachelor-Studiengänge (B) nach vorne, damit diese bevorzugt werden.
+    # Heuristik: " (B)" kommt vor " (M)"
+    courses_by_pref = sorted(courses, key=lambda x: (0 if "(B)" in x.get("longName", "") else 1))
+    for c in courses_by_pref:
+        long_name = c.get("longName", "")
+        if long_name and q in _norm(long_name):
+            # Gib den Langnamen zurück (für UI) + das Kürzel (für API)
+            return long_name, c["name"]
         
     # Wenn q wie ein Kürzel aussieht (4 Großbuchstaben), gib es zurück
     if re.fullmatch(r"[A-Z]{3,6}", query.upper()):
