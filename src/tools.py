@@ -147,18 +147,29 @@ async def build_lecturer_index() -> int:
             
             log.info("Dozenten-Index: h-ka.de: Seite %d geladen...", page)
             import re as _re
-            # Wir suchen nach den Zeilen-Blöcken (TR), um URL, Name und Email zusammenhängend zu finden
-            # Pattern für TR mit data-document-url (Titel ist optional)
-            tr_pattern = r'<tr[^>]*data-document-url="(.*?)"[^>]*>.*?<span class="person__user-academic-title">(.*?)</span>.*?<span class="person__user-name-title">(.*?)</span>.*?([\w.\-]+)<span[^>]*>spam prevention</span>@h-ka\.de'
-            for p_url, p_title, p_name, p_mail_user in _re.findall(tr_pattern, r.text, _re.DOTALL):
-                full_name = _re.sub(r'\s+', ' ', f"{p_title} {p_name}").strip()
-                persons.append({
-                    "name": full_name,
-                    "vorname": p_mail_user.split(".")[0],
-                    "nachname": p_mail_user.split(".")[-1],
-                    "email": f"{p_mail_user}@h-ka.de",
-                    "url": p_url
-                })
+            
+            # Effizientes Splitting in TR-Blöcke, um Backtracking zu verhindern
+            tr_blocks = _re.findall(r'<tr[^>]*data-document-url=".*?".*?>.*?</tr>', r.text, _re.DOTALL)
+            for block in tr_blocks:
+                m_url = _re.search(r'data-document-url="(.*?)"', block)
+                m_title = _re.search(r'class="person__user-academic-title">(.*?)</span>', block)
+                m_name = _re.search(r'class="person__user-name-title">(.*?)</span>', block)
+                m_mail = _re.search(r'([\w.\-]+)<span[^>]*>spam prevention</span>@h-ka\.de', block)
+                
+                if m_url and m_mail:
+                    p_url = m_url.group(1)
+                    p_title = m_title.group(1) if m_title else ""
+                    p_name = m_name.group(1) if m_name else ""
+                    p_mail_user = m_mail.group(1)
+                    
+                    full_name = _re.sub(r'\s+', ' ', f"{p_title} {p_name}").strip()
+                    persons.append({
+                        "name": full_name,
+                        "vorname": p_mail_user.split(".")[0],
+                        "nachname": p_mail_user.split(".")[-1],
+                        "email": f"{p_mail_user}@h-ka.de",
+                        "url": p_url
+                    })
             
             if f"page={page + 1}" not in r.text and f"page%5D={page + 1}" not in r.text:
                 break

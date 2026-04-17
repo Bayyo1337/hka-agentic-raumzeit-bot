@@ -1,4 +1,3 @@
-
 # Session Log - 17.04.2026
 
 ## Task: Redundante Gruppennamen in Konflikt-Analyse ausblenden
@@ -72,6 +71,25 @@ Nutzer berichteten über fehlendes Feedback während des langen `sync`-Befehls.
 ### Validation
 - Syntax-Check mit `py_compile` bestanden.
 - Die asynchrone Struktur wurde beibehalten, aber durch Batches und Logs unterbrochen, um realzeitnahes Feedback auf der Konsole zu ermöglichen.
+
+### Dependencies
+- Keine neuen Abhängigkeiten.
+
+## Task: Sync-Performance Fix für h-ka.de Dozenten-Index
+Die Synchronisierung des Dozenten-Index von `h-ka.de` war extrem langsam, da ein ineffizienter Regex zu massivem Backtracking auf großen HTML-Seiten führte.
+
+### Changes
+- **src/tools.py**:
+    - `tr_pattern` entfernt.
+    - Neue Logik: HTML wird erst in `<tr>` Blöcke gesplittet.
+    - Felder (URL, Titel, Name, Email) werden nun pro Block mit einfachen, spezifischen Regexes extrahiert.
+    - Unterstützung für fehlende `person__user-name-title` Felder (graceful degradation).
+
+### Validation
+- **Logic**: Repro-Skript `scripts/repro_sync_hka.py` verifiziert:
+    - Extraktionsdauer von Seite 1 sank von mehreren Minuten/Hang auf **0.0024s**.
+    - Alle 19 Personen auf Seite 1 wurden korrekt erkannt.
+- **Syntax**: `uv run python -m py_compile src/tools.py` - PASSED
 
 ### Dependencies
 - Keine neuen Abhängigkeiten.
