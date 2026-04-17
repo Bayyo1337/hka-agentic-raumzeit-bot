@@ -16,13 +16,4 @@ Filter: "thermodynamik"
       (09:50–11:20 in M-102)
 
 dies macht kein Sinn, da wenn der kurs in allen gruppen drin ist, ist es eine Pflichtveranstaltung für alle des studiengangs, dies ist grundsätzlich der Fall! Dies muss auch nicht extra gesagt werden!
----
-## Lösung
-Die Anzeige von Gruppennamen in der Konflikt-Analyse wurde optimiert.
 
-### Durchgeführte Änderungen:
-1. **Vollständigkeits-Check**: Der Bot erkennt nun, welche Gruppen insgesamt für ein Semester existieren.
-2. **Intelligentes Ausblenden**: Wenn eine Vorlesung in allen Gruppen stattfindet (Pflichtveranstaltung), wird der Gruppen-Suffix (z.B. "Gruppe A, F, K, P, U") ausgeblendet.
-3. **Präzision**: Besteht eine Überschneidung nur für eine Teilmenge der Gruppen, werden diese weiterhin explizit aufgeführt.
-
-**Verifiziert mit Repro-Skript.**
