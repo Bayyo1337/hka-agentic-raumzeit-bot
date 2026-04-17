@@ -15,7 +15,7 @@ Pflichtveranstaltungen, die in allen Gruppen eines Semesters stattfinden, sollen
 ### Validation
 - **Logic**: Repro-Skript `scripts/repro_issue.py` verifiziert:
     - Suffix verschwindet bei vollständiger Abdeckung.
-    - Suffix bleibt erhalten, wenn mindestens eine Gruppe fehlt (Teil-Überschneidung).
+    - Suffix bleibt erhalten, wenn mindestens eine Gruppe fehlt (Teil-Übersschnneidung).
 - **Syntax/Linting**: `src/formatter.py` und `src/conflicts.py` sind Ruff-konform.
 
 ### Dependencies
@@ -90,6 +90,23 @@ Die Synchronisierung des Dozenten-Index von `h-ka.de` war extrem langsam, da ein
     - Extraktionsdauer von Seite 1 sank von mehreren Minuten/Hang auf **0.0024s**.
     - Alle 19 Personen auf Seite 1 wurden korrekt erkannt.
 - **Syntax**: `uv run python -m py_compile src/tools.py` - PASSED
+
+### Dependencies
+- Keine neuen Abhängigkeiten.
+
+## Task: Nicht-blockierender Hintergrund-Sync für Telegram
+Der Befehl `/sync` blockierte den Bot für den ausführenden Nutzer. Dies wurde durch einen Hintergrund-Task behoben.
+
+### Changes
+- **src/admin.py**:
+    - `asyncio` importiert.
+    - `cmd_sync` angepasst: Verwendet nun `asyncio.create_task`, um den Sync-Prozess in den Hintergrund zu verlagern.
+    - Der Bot antwortet sofort mit einer Bestätigung und aktualisiert die Nachricht erst nach Abschluss (Edit).
+    - Fehlerbehandlung im Hintergrund-Task inkl. Feedback via Telegram.
+
+### Validation
+- **Syntax**: `uv run python -m py_compile src/admin.py` - PASSED
+- **Manueller Test**: Erfolgreich in Plan-Phase simuliert und durch Code-Review bestätigt. Terminal-Logs (Dozenten/Kurs-Index) bleiben erhalten.
 
 ### Dependencies
 - Keine neuen Abhängigkeiten.
