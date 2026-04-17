@@ -121,11 +121,15 @@ async def build_lecturer_index() -> int:
     keys = [f"{a}.{s}" for a in abbreviations for s in range(1, 8)]
     for i in range(0, len(keys), 40):
         await asyncio.gather(*[_fetch_course_contacts(k) for k in keys[i:i + 40]])
+        if (i // 40) % 4 == 0:
+            log.info("Dozenten-Index: Kurse scannen: %d/%d abgeschlossen", min(i + 40, len(keys)), len(keys))
     
     # Alle Räume scannen (Batch)
     room_names = [r.get("name") for r in rooms if isinstance(r, dict) and r.get("name")]
     for i in range(0, len(room_names), 40):
         await asyncio.gather(*[_fetch_room_lecturers(n) for n in room_names[i:i + 40]])
+        if (i // 40) % 4 == 0:
+            log.info("Dozenten-Index: Räume scannen: %d/%d abgeschlossen", min(i + 40, len(room_names)), len(room_names))
     
     log.info("Dozenten-Index: %d eindeutige Kürzel aus Raumzeit gesammelt", len(known))
 
@@ -141,6 +145,7 @@ async def build_lecturer_index() -> int:
             except Exception: break
             if r.status_code != 200: break
             
+            log.info("Dozenten-Index: h-ka.de: Seite %d geladen...", page)
             import re as _re
             # Wir suchen nach den Zeilen-Blöcken (TR), um URL, Name und Email zusammenhängend zu finden
             # Pattern für TR mit data-document-url (Titel ist optional)
@@ -213,6 +218,8 @@ async def build_lecturer_index() -> int:
 
         for i in range(0, len(to_scrape), 20):
             await asyncio.gather(*[_fetch_sprechzeit(k, u) for k, u in to_scrape[i:i + 20]])
+            if (i // 20) % 5 == 0:
+                log.info("Dozenten-Index: Sprechzeiten scrapen: %d/%d abgeschlossen", min(i + 20, len(to_scrape)), len(to_scrape))
             await asyncio.sleep(0.5) # Kurze Pause zwischen Batches
 
     # 4. Bestehende manuelle Einträge erhalten
@@ -753,22 +760,29 @@ async def build_course_index() -> int:
     abbreviations = [c["name"] for c in courses if c.get("name")]
     log.info("Kurs-Index: %d Studiengänge gefunden", len(abbreviations))
 
-    # Phase 1: Für alle Kürzel alle Semester 1–10 parallel prüfen
+    # Phase 1: Für alle Kürzel alle Semester 1–10 parallel prüfen (in Batches)
     sem_tasks = [
-        (abbr, sem, _probe_course_key(f"{abbr}.{sem}"))
+        (abbr, sem, f"{abbr}.{sem}")
         for abbr in abbreviations
         for sem in range(1, 11)
     ]
-    sem_results = await asyncio.gather(*[t for _, _, t in sem_tasks])
+    sem_results = []
+    log.info("Kurs-Index: Prüfe Basis-Semester (Phase 1/2)...")
+    for i in range(0, len(sem_tasks), 40):
+        batch = sem_tasks[i:i + 40]
+        results = await asyncio.gather(*[_probe_course_key(key) for _, _, key in batch])
+        sem_results.extend(results)
+        if (i // 40) % 4 == 0:
+            log.info("Kurs-Index: Phase 1 Fortschritt: %d/%d Kombinationen geprüft", min(i + 40, len(sem_tasks)), len(sem_tasks))
 
     valid_base: list[tuple[str, int]] = []  # (abbreviation, semester)
     for (abbr, sem, _), ok in zip(sem_tasks, sem_results):
         if ok:
             valid_base.append((abbr, sem))
 
-    log.info("Kurs-Index: %d gültige Semester-Kombinationen", len(valid_base))
+    log.info("Kurs-Index: %d gültige Semester-Kombinationen gefunden", len(valid_base))
 
-    # Phase 2: Für alle gültigen Semester Gruppen prüfen.
+    # Phase 2: Für alle gültigen Semester Gruppen prüfen (in Batches)
     # Bekannte Einzelbuchstaben aus API-Analyse über alle Fakultäten: A,B,C,D,F,K,P,S,U,Z,E
     # + mehrstellige Kürzel die in der Praxis vorkommen
     _single = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -776,11 +790,18 @@ async def build_course_index() -> int:
     group_suffixes = _single + _multi
 
     grp_tasks = [
-        (abbr, sem, suffix, _probe_course_key(f"{abbr}.{sem}.{suffix}"))
+        (abbr, sem, suffix, f"{abbr}.{sem}.{suffix}")
         for abbr, sem in valid_base
         for suffix in group_suffixes
     ]
-    grp_results = await asyncio.gather(*[t for _, _, _, t in grp_tasks])
+    grp_results = []
+    log.info("Kurs-Index: Prüfe Gruppen-Kombinationen (Phase 2/2)...")
+    for i in range(0, len(grp_tasks), 40):
+        batch = grp_tasks[i:i + 40]
+        results = await asyncio.gather(*[_probe_course_key(key) for _, _, _, key in batch])
+        grp_results.extend(results)
+        if (i // 40) % 10 == 0:
+            log.info("Kurs-Index: Phase 2 Fortschritt: %d/%d Kombinationen geprüft", min(i + 40, len(grp_tasks)), len(grp_tasks))
 
     # Ergebnisse sammeln
     entries: list[dict] = []
