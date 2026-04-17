@@ -461,7 +461,7 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
     else:
         _consecutive_network_errors = 0
         # In der Konsole nur kurz, im Logfile (da DEBUG/INFO dort alles fängt) steht der Rest
-        log.error("Unbehandelter Fehler in Bot-Logik: %s (Details in data/bot.log)", context.error, exc_info=False)
+        log.error("Unbehandelter Fehler in Bot-Logik: %s (Details in logs/bot.txt)", context.error, exc_info=False)
 
 async def _post_init(app) -> None:
     await db.init()
