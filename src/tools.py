@@ -608,6 +608,7 @@ def _parse_ical(text: str, filter_date: str | None = None,
 
     return [{
         "name": e.get("name", ""),
+        "module": e.get("name", ""),  # Bei iCal (Dozenten/Raum) ist Name oft das Modul
         "start": e.get("start", ""),
         "end": e.get("end", ""),
         "room": e.get("room", ""),

@@ -68,17 +68,21 @@ def _dedup_bookings(bookings: list[dict]) -> list[dict]:
             m_end = _to_hhmm(m.get("end", ""))
             m_room = m.get("room", "")
             m_date = m.get("date", "")
+            
             if m_start == start and m_end == end and m_room == room and m_date == date_str:
+                m_mod = m.get("module") or m.get("name")
+                b_mod = module or name
+                
                 # Prüfen, ob Dozent gleich ist ODER Modulname sehr ähnlich
                 if (lecturer and m.get("lecturer") == lecturer) or \
-                   (module and _norm_mod(module) in _norm_mod(m.get("module", ""))) or \
-                   (m.get("module") and _norm_mod(m.get("module", "")) in _norm_mod(module)):
+                   (b_mod and _norm_mod(b_mod) in _norm_mod(m_mod or "")) or \
+                   (m_mod and _norm_mod(m_mod or "") in _norm_mod(b_mod or "")):
                     # Merge it!
                     names = m.get("name", "").split(", ")
                     if name not in names:
                         names.append(name)
                         m["name"] = ", ".join(names)
-                    if len(module) > len(m.get("module", "")):
+                    if module and len(module) > len(m.get("module", "")):
                         m["module"] = module
                     found = True
                     break

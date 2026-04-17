@@ -21,3 +21,22 @@ Pflichtveranstaltungen, die in allen Gruppen eines Semesters stattfinden, sollen
 
 ### Dependencies
 - Keine neuen Abhängigkeiten.
+
+## Task: Mehrfache Modulausgabe in Dozenten-Stundenplänen beheben
+Identische Module, die zur gleichen Zeit in den gleichen Räumen für verschiedene Gruppen stattfinden, wurden in Dozenten-Stundenplänen mehrfach angezeigt.
+
+### Changes
+- **src/tools.py**:
+    - `_parse_ical` befüllt nun auch das Feld `module` (Fallback auf `name`), was dem Formatter bei der Erkennung hilft.
+- **src/formatter.py**:
+    - `_dedup_bookings` wurde robuster gestaltet und nutzt nun `name` als Fallback für `module`, wenn letzteres leer ist.
+
+### Validation
+- **Logic**: Repro-Skript `scripts/repro_lecturer_dupes.py` verifiziert:
+    - Buchungen mit identischer Zeit/Raum/Modul werden nun korrekt zu einem Eintrag zusammengefasst.
+    - Gruppen-Suffixe werden aggregiert.
+- **Syntax**: `uv run python -m py_compile src/tools.py src/formatter.py` - PASSED
+- **Linting**: Ruff meldet bestehende Formatierungsfehler in `src/tools.py`, der neue Code ist jedoch konform.
+
+### Dependencies
+- Keine neuen Abhängigkeiten.
