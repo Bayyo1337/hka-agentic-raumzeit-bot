@@ -1174,6 +1174,23 @@ TOOL_DEFINITIONS = [
                 "required": ["room_or_building"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_timetable_conflicts",
+            "description": "Analysiert Stundenplan-Überschneidungen zwischen zwei Semestern, optional gefiltert nach einem Fach.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "course": {"type": "string", "description": "Name oder Kürzel des Studiengangs (z.B. 'Maschinenbau')."},
+                    "base_sem": {"type": "integer", "description": "Das Basis-Semester (z.B. 2)."},
+                    "target_sem": {"type": "integer", "description": "Das Ziel-Semester zum Vergleich (z.B. 3)."},
+                    "module_filter": {"type": "string", "description": "Optionaler Filter für ein Fach (z.B. 'etechnik')."},
+                },
+                "required": ["course", "base_sem", "target_sem"],
+            },
+        },
     }
 ]
 
@@ -1193,4 +1210,20 @@ TOOL_HANDLERS = {
     "get_courses_of_study":    lambda inp: get_courses_of_study(inp.get("faculty")),
     "get_university_calendar": lambda inp: get_university_calendar(),
     "get_campus_map":          lambda inp: get_campus_map(inp.get("room_or_building", "")),
+    "find_timetable_conflicts": lambda inp: _handle_conflicts(inp),
 }
+
+async def _handle_conflicts(inp: dict):
+    from src.conflicts import find_timetable_conflicts
+    # Course-Kürzel auflösen
+    course_query = inp.get("course", "")
+    _, abbr = await resolve_course_name(course_query)
+    if not abbr:
+        return {"error": f"Studiengang '{course_query}' konnte nicht zugeordnet werden."}
+    
+    return await find_timetable_conflicts(
+        abbr, 
+        int(inp.get("base_sem", 1)), 
+        int(inp.get("target_sem", 1)), 
+        inp.get("module_filter")
+    )

@@ -452,6 +452,61 @@ def _fmt_calendar(result) -> str:
     return "\n".join(lines)
 
 
+def _fmt_conflicts(result: dict) -> str:
+    if "error" in result: return f"❌ {result['error']}"
+    
+    course = result.get("course", "?")
+    base_sem = result.get("base_sem", "?")
+    target_sem = result.get("target_sem", "?")
+    module_filter = result.get("filter")
+    results = result.get("results", [])
+    
+    if not results:
+        return f"✅ Keine Konflikte für {module_filter or 'den Plan'} in {course} (Sem {base_sem} vs {target_sem}) gefunden."
+    
+    lines = [f"⚠️ *Konflikt-Analyse: {course}*"]
+    lines.append(f"Vergleich: Semester {base_sem} ↔️ Semester {target_sem}")
+    if module_filter:
+        lines.append(f"Filter: \"{module_filter}\"")
+    lines.append("")
+    
+    # Gruppieren nach Wochentag
+    from collections import defaultdict
+    by_day = defaultdict(list)
+    for entry in results:
+        day = entry["base_event"].get("day")
+        if not day:
+            try:
+                dt = _date.fromisoformat(entry["base_event"]["date"])
+                day = _WEEKDAY_DE[dt.weekday()]
+            except:
+                day = "Unbekannter Tag"
+        by_day[day].append(entry)
+        
+    day_order = {d: i for i, d in enumerate(_WEEKDAY_DE)}
+    
+    for day in sorted(by_day.keys(), key=lambda d: day_order.get(d, 99)):
+        lines.append(f"📅 *{day}:*")
+        for entry in by_day[day]:
+            b = entry["base_event"]
+            conflicts = entry["conflicts"]
+            
+            group_info = f" (Gruppe {b.get('gruppe')})" if b.get("gruppe") else ""
+            lines.append(f"📍 *{b['name']}*{group_info}")
+            lines.append(f"   Zeit: {b.get('start_clean', b['start'])}–{b.get('end_clean', b['end'])}")
+            
+            if not conflicts:
+                lines.append("   ✅ _Keine Überschneidungen in diesem Slot._")
+            else:
+                for c in conflicts:
+                    c_group = f" [{c.get('gruppe')}]" if c.get("gruppe") else ""
+                    lines.append(f"   🔴 Konflikt mit: *{c['name']}*{c_group}")
+                    lines.append(f"      ({c.get('start_clean', c['start'])}–{c.get('end_clean', c['end'])} in {c.get('room', '?')})")
+            lines.append("")
+            
+    return "\n".join(lines).strip()
+
+
 # ── Haupt-Dispatcher ─────────────────────────────────────────────────────────
 
 _FORMATTERS = {
@@ -466,6 +521,7 @@ _FORMATTERS = {
     "get_departments":         _fmt_list,
     "get_courses_of_study":    _fmt_list,
     "get_all_rooms":           _fmt_list,
+    "find_timetable_conflicts": _fmt_conflicts,
 }
 
 

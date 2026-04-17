@@ -49,6 +49,7 @@ Verfügbare Tools:
 - get_departments: keine Parameter
 - get_courses_of_study: faculty_id (optional)
 - get_university_calendar: keine Parameter
+- find_timetable_conflicts: course (z.B. "Maschinenbau"), base_sem (int, Semester in dem das Fach liegt), target_sem (int, Semester mit dem verglichen werden soll), module_filter (optional, z.B. "etechnik")
 - get_campus_map: room_or_building (z.B. "LI-145" oder "Gebäude M") - NUTZE DIES NUR BEI FRAGEN NACH DEM ORT/STOCKWERK!
 
 Regeln:
