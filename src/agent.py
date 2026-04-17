@@ -20,7 +20,7 @@ from datetime import date
 import litellm
 from src.config import settings
 from src.tools import TOOL_HANDLERS
-from src import formatter
+from src import formatter, db
 
 log = logging.getLogger(__name__)
 litellm.drop_params = True      # ignoriert unsupported params statt Fehler
@@ -147,6 +147,10 @@ async def run(user_message: str, history: list[dict], user_label: str = "", prim
         + [{"role": "user", "content": user_message}]
     )
     log.debug("User %s: %.80s", user_label, user_message)
+    _set_api_key()
+
+    # Logge den kompletten Prompt für Debug-Zwecke
+    log.debug("Vollständiger Prompt für LLM:\n%s", json.dumps(messages, indent=2, ensure_ascii=False))
 
     # Einzelner LLM-Call zur Intent-Extraktion
     for attempt in range(3):
@@ -170,7 +174,7 @@ async def run(user_message: str, history: list[dict], user_label: str = "", prim
     total_output_tokens = getattr(usage, "completion_tokens", 0) or 0 if usage else 0
 
     raw = response.choices[0].message.content or ""
-    log.debug("LLM Extraktion: %s", raw[:300])
+    log.debug("LLM Extraktion: %s", raw) # Komplette Ausgabe
 
     try:
         parsed = json.loads(raw)
@@ -207,6 +211,26 @@ async def run(user_message: str, history: list[dict], user_label: str = "", prim
             return name, await handler(args)
         except Exception as exc:
             log.exception("Tool '%s' fehlgeschlagen", name)
+            
+            # Bei kritischen Fehlern (wie NameError) Prompt und Debug-Info loggen
+            if isinstance(exc, (NameError, AttributeError, ImportError, TypeError)):
+                debug_data = {
+                    "timestamp": date.today().isoformat(),
+                    "user_message": user_message,
+                    "prompt": messages,
+                    "llm_raw_output": raw,
+                    "tool": name,
+                    "args": args,
+                    "error": str(exc)
+                }
+                try:
+                    os.makedirs("data/debug_logs", exist_ok=True)
+                    log_path = f"data/debug_logs/error_{name}_{date.today().isoformat()}.json"
+                    with open(log_path, "w", encoding="utf-8") as f:
+                        json.dump(debug_data, f, ensure_ascii=False, indent=2, default=str)
+                    log.info("Kritischer Fehler gespeichert unter: %s", log_path)
+                except: pass
+                
             return name, {"error": str(exc)}
 
     collected_results: list[tuple[str, dict]] = list(

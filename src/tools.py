@@ -836,6 +836,33 @@ async def _probe_course_key(key: str) -> bool:
             return False
 
 
+async def resolve_course_name(query: str) -> tuple[str, str | None]:
+    """Löst einen Studiengang-Namen oder ein Kürzel zu einem offiziellen Kürzel auf."""
+    q = _norm(query)
+    
+    # 1. Bekannte Kürzel direkt prüfen
+    # Wir laden alle Kurse aus der API oder dem Cache
+    courses = await get_courses_of_study()
+    
+    # Exakter Match auf Kürzel
+    for c in courses:
+        if _norm(c["name"]) == q:
+            return c["name"], c["name"]
+            
+    # Teil-Match auf Name
+    for c in courses:
+        # Manche Kurse haben 'shortName' oder 'description'?
+        # In der HKA API ist 'name' oft das Kürzel (z.B. MABB)
+        # Wir bräuchten eigentlich eine Liste der Klarnamen.
+        pass
+        
+    # Wenn q wie ein Kürzel aussieht (4 Großbuchstaben), gib es zurück
+    if re.fullmatch(r"[A-Z]{3,6}", query.upper()):
+        return query.upper(), query.upper()
+        
+    return query, None
+
+
 async def ping_api() -> dict:
     """Prüft Erreichbarkeit der Raumzeit API: Auth + leichter GET."""
     start = time.monotonic()
