@@ -143,12 +143,12 @@ async def build_lecturer_index() -> int:
             
             import re as _re
             # Wir suchen nach den Zeilen-Blöcken (TR), um URL, Name und Email zusammenhängend zu finden
-            # Pattern für TR mit data-document-url
-            tr_pattern = r'<tr[^>]*data-document-url="(.*?)"[^>]*>.*?<span class="person__user-academic-title">(.*?)</span>.*?([\w.\-]+)<span[^>]*>spam prevention</span>@h-ka\.de'
-            for p_url, p_name, p_mail_user in _re.findall(tr_pattern, r.text, _re.DOTALL):
-                name = _re.sub(r'\s+', ' ', p_name).strip()
+            # Pattern für TR mit data-document-url (Titel ist optional)
+            tr_pattern = r'<tr[^>]*data-document-url="(.*?)"[^>]*>.*?<span class="person__user-academic-title">(.*?)</span>.*?<span class="person__user-name-title">(.*?)</span>.*?([\w.\-]+)<span[^>]*>spam prevention</span>@h-ka\.de'
+            for p_url, p_title, p_name, p_mail_user in _re.findall(tr_pattern, r.text, _re.DOTALL):
+                full_name = _re.sub(r'\s+', ' ', f"{p_title} {p_name}").strip()
                 persons.append({
-                    "name": name,
+                    "name": full_name,
                     "vorname": p_mail_user.split(".")[0],
                     "nachname": p_mail_user.split(".")[-1],
                     "email": f"{p_mail_user}@h-ka.de",
@@ -168,17 +168,24 @@ async def build_lecturer_index() -> int:
         prefix = _norm2ch(p["nachname"]) + _norm2ch(p["vorname"])
         alt_prefix = _norm(p["nachname"])[:4]
         
+        found = False
+        # Erst versuchen wir ein echtes Raumzeit-Kürzel zu finden (aa0001)
         for num in range(1, 21):
-            found = False
             for pre in [prefix, alt_prefix]:
                 kuerzel = f"{pre}{num:04d}"
                 if kuerzel in known:
                     matched[kuerzel] = {"name": p["name"], "email": p["email"]}
-                    if p.get("url"):
-                        to_scrape.append((kuerzel, p["url"]))
+                    if p.get("url"): to_scrape.append((kuerzel, p["url"]))
                     found = True
                     break
             if found: break
+        
+        # Falls kein Raumzeit-Match, trotzdem als UNKNOWN_... speichern (für Kontakt-Infos)
+        if not found:
+            # Wir nutzen das E-Mail-Präfix als Schlüssel
+            mail_key = p["email"].split("@")[0]
+            matched[mail_key] = {"name": p["name"], "email": p["email"]}
+            if p.get("url"): to_scrape.append((mail_key, p["url"]))
 
     # Sprechzeiten asynchron laden (mit Batching um Server zu schonen)
     if to_scrape:
@@ -189,12 +196,19 @@ async def build_lecturer_index() -> int:
                     r = await c.get(profile_url, headers={"User-Agent": "Mozilla/5.0"})
                 if r.status_code == 200:
                     import re as _re
-                    # Suche nach Sprechzeiten-Block (Sprechzeiten: <br/> ...)
-                    pattern = r'(?:Sprechzeit(?:en)?|Sprechstunde(?:n)?)\s*:\s*<br\s*/?>\s*(.*?)\s*</p>'
+                    # 1. Suche nach Sprechzeiten-Block (Sprechzeiten: <br/> ...)
+                    pattern = r'(?:Sprechzeit(?:en)?|Sprechstunde(?:n)?)\s*:\s*(?:<br\s*/?>\s*)?(.*?)\s*(?:</p>|<strong>|<li>)'
                     match = _re.search(pattern, r.text, _re.DOTALL | _re.IGNORECASE)
                     if match:
                         text = _re.sub(r'<[^>]*>', ' ', match.group(1)).strip()
                         matched[kuerzel]["sprechzeit"] = _re.sub(r'\s+', ' ', text)
+                    
+                    # 2. Suche nach Raum/Büro
+                    room_pattern = r'(?:Raum|Büro)\s*:\s*(?:<br\s*/?>\s*)?(.*?)\s*(?:</p>|<strong>|<li>)'
+                    rmatch = _re.search(room_pattern, r.text, _re.DOTALL | _re.IGNORECASE)
+                    if rmatch:
+                        room_text = _re.sub(r'<[^>]*>', ' ', rmatch.group(1)).strip()
+                        matched[kuerzel]["room"] = _re.sub(r'\s+', ' ', room_text)
             except Exception: pass
 
         for i in range(0, len(to_scrape), 20):

@@ -344,13 +344,16 @@ def _fmt_lecturer_info(result: dict) -> str:
     name = result.get("name", "?")
     email = result.get("email")
     sprechzeit = result.get("sprechzeit")
+    room = result.get("room")
     
     lines = [f"👤 *Dozenten-Info: {name}*"]
     if email:
         lines.append(f"📧 E-Mail: {email}")
     if sprechzeit:
         lines.append(f"🕒 Sprechzeit: {sprechzeit}")
-    if not email and not sprechzeit:
+    if room:
+        lines.append(f"🏫 Raum/Büro: {room}")
+    if not email and not sprechzeit and not room:
         lines.append("Keine Kontaktinformationen hinterlegt.")
     return "\n".join(lines)
 
