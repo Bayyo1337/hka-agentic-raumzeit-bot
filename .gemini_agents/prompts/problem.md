@@ -1,28 +1,37 @@
-# Bugfix: Telegram Message Too Long
+# Optimierung der Konflikt-Analyse-Ausgabe
 
 ## Hintergrund & Motivation
-Bei umfangreichen Stundenplan-Abfragen oder Konflikt-Analysen kann die Antwort des Bots das Telegram-Limit von 4096 Zeichen überschreiten. In diesem Fall verweigert die API den Versand mit `BadRequest: Message is too long`.
+Die aktuelle Ausgabe der Konflikt-Analyse ist redundant und zu umfangreich. Nutzer beschweren sich darüber, dass:
+1. Identische Vorlesungsslots für verschiedene Gruppen (.A, .F, .U etc.) mehrfach gelistet werden.
+2. Slots ohne Konflikte ("Keine Überschneidungen") angezeigt werden, was die Nachricht unnötig in die Länge zieht.
 
 ## Ursachenanalyse / Ist-Zustand
-Der Traceback zeigt, dass `update.message.reply_text` fehlschlägt. Die aktuelle Fehlerbehandlung in `_send_reply` versucht zwar, die Nachricht ohne Markdown zu senden, falls der erste Versuch scheitert, aber das hilft nicht gegen das Längenlimit.
+Das Ergebnis des Repro-Skripts zeigt:
+```
+📅 *Mo:*
+📍 *Management and Consulting* (Gruppe MABB.7.A)
+   Zeit: 09:50–11:20
+   ✅ _Keine Überschneidungen in diesem Slot._
 
-Repro-Ergebnis:
-`CAUGHT: Message too long`
-`Test failed as expected`
+📍 *Management and Consulting* (Gruppe MABB.7.F)
+   Zeit: 09:50–11:20
+   ✅ _Keine Überschneidungen in diesem Slot._
+```
+Hier sind beide Probleme sichtbar: Redundanz der Gruppen und unnötige "Erfolgsmeldungen".
 
 ## Lösungsvorschlag
-Die Nachricht muss in kleinere Stücke (Chunks) zerlegt werden, die jeweils das Limit nicht überschreiten.
-1. Implementierung einer `split_message`-Hilfsfunktion, die bevorzugt an Zeilenumbrüchen trennt.
-2. Anpassung von `_send_reply` in `src/bot.py`, um die Nachricht in Chunks zu senden, falls sie zu lang ist.
+Die Funktion `_fmt_conflicts` in `src/formatter.py` muss angepasst werden:
+1. **Deduplizierung**: Vorlesungen mit gleichem Namen, Datum und Zeit sollten zusammengefasst werden. Die Gruppen können in Klammern aufgezählt werden (z.B. "Gruppe A, F, U").
+2. **Filterung**: Nur Slots, die tatsächlich mindestens einen Konflikt haben, sollen ausgegeben werden.
+3. **Spezialfall**: Falls gar keine Konflikte gefunden wurden (nach der Filterung), sollte eine zusammenfassende Erfolgsmeldung ausgegeben werden.
 
 ## Umsetzungsschritte
-1. **Hilfsfunktion `_chunk_message(text, limit=4000)`** in `src/bot.py` oder einem Utility-Modul hinzufügen.
-2. **`_send_reply` anpassen**:
-   - Prüfe die Länge von `reply`.
-   - Falls > 4000, teile die Nachricht.
-   - Sende jeden Teil einzeln.
-   - Stelle sicher, dass `_bot_messages` alle Teil-Nachrichten erfasst, damit `/clear` weiterhin funktioniert.
+1. **`src/formatter.py` bearbeiten**:
+   - `_fmt_conflicts` umschreiben.
+   - Logik zur Gruppierung nach (Name, Datum, Zeit) implementieren.
+   - Filter für `if conflicts:` hinzufügen.
+   - Behandlung für den Fall "Keine Konflikte nach Filterung" ergänzen.
 
 ## Verifizierung & Testing
-- Ausführen des Repro-Skripts `scripts/repro_issue.py` (angepasst auf Chunks).
-- Manueller Test mit einer sehr langen Nachricht (z.B. Brute-Force Abfrage für einen vollen Studiengang).
+- Ausführen des Repro-Skripts `scripts/repro_issue.py` (erwarteter Erfolg nach Fix).
+- Testen mit einem Szenario, in dem tatsächlich gar keine Konflikte vorliegen.
