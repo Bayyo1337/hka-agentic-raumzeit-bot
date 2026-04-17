@@ -40,3 +40,21 @@ Identische Module, die zur gleichen Zeit in den gleichen Räumen für verschiede
 
 ### Dependencies
 - Keine neuen Abhängigkeiten.
+
+## Task: Chronologische Reihenfolge im Dozenten-Stundenplan
+Dozenten-Stundenpläne wurden bisher raumweise gruppiert, was die zeitliche Abfolge unübersichtlich machte.
+
+### Changes
+- **src/formatter.py**:
+    - `_fmt_lecturer` wurde umgestellt: Gruppierung nach Räumen entfernt.
+    - Alle Buchungen eines Tages werden nun in einer einzigen `_render_timeline` zusammengefasst.
+    - Räume werden nun (wie in anderen Views) als Suffix (z.B. `🏫 M-002`) am Eintrag angezeigt.
+
+### Validation
+- **Logic**: Repro-Skript `scripts/repro_chronology.py` verifiziert:
+    - Termine aus verschiedenen Räumen werden nun strikt nach Uhrzeit sortiert.
+    - Lücken (🟢 frei) werden raumübergreifend korrekt berechnet.
+- **Syntax**: `uv run python -m py_compile src/formatter.py` - PASSED
+
+### Dependencies
+- Keine neuen Abhängigkeiten.

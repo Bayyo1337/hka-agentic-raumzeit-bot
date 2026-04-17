@@ -303,7 +303,7 @@ def _fmt_lecturer(result: dict) -> str:
         return "\n".join(lines)
 
     from collections import defaultdict
-    by_day_room: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+    by_day: dict[str, list] = defaultdict(list)
     for b in bookings:
         d_name = b.get("day")
         if not d_name and b.get("date"):
@@ -313,11 +313,10 @@ def _fmt_lecturer(result: dict) -> str:
             except Exception:
                 pass
         d_name = d_name or "Termine"
-        room = b.get("room") or "Unbekannter Raum"
-        by_day_room[d_name][room].append(b)
+        by_day[d_name].append(b)
 
     _day_order = {d: i for i, d in enumerate(_WEEKDAY_DE)}
-    sorted_days = sorted(by_day_room.keys(), key=lambda d: _day_order.get(d, 99))
+    sorted_days = sorted(by_day.keys(), key=lambda d: _day_order.get(d, 99))
 
     all_lines = []
     if email or sprechzeit:
@@ -329,12 +328,10 @@ def _fmt_lecturer(result: dict) -> str:
 
     total_days = len(sorted_days)
     for day in sorted_days:
-        rooms_on_day = by_day_room[day]
-        for room in sorted(rooms_on_day.keys()):
-            date_label = _fmt_date(queried_date) if total_days == 1 and queried_date and queried_date != "heute" else day
-            deduplicated = _dedup_bookings(rooms_on_day[room])
-            all_lines.extend(_render_timeline(deduplicated, date_label, f"🏫 *{room}*"))
-            all_lines.append("")
+        date_label = _fmt_date(queried_date) if total_days == 1 and queried_date and queried_date != "heute" else day
+        # Alle Buchungen des Tages (raumübergreifend) in eine Timeline rendern
+        all_lines.extend(_render_timeline(by_day[day], date_label))
+        all_lines.append("")
 
     # Header ganz am Anfang einfügen
     return (header + "\n" + "\n".join(all_lines)).strip()
