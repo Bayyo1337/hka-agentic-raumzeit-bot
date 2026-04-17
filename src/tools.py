@@ -347,6 +347,7 @@ def _parse_timetable_text(text: str, filter_date: str | None = None) -> list[dic
 
 _token: str | None = None
 _token_expires: float = 0.0
+_token_lock = asyncio.Lock()
 
 
 def _jwt_expiry(token: str) -> float:
@@ -363,24 +364,26 @@ def _jwt_expiry(token: str) -> float:
 
 async def _get_token() -> str:
     global _token, _token_expires
-    if _token and time.monotonic() < _token_expires - 30:
-        return _token
-    async with httpx.AsyncClient(base_url=settings.raumzeit_base_url) as c:
-        r = await c.post(
-            "/private/api/v1/authentication",
-            json={"login": settings.raumzeit_login, "password": settings.raumzeit_password},
-        )
-        r.raise_for_status()
-        _token = r.json()["accessToken"]
-        _token_expires = _jwt_expiry(_token)
-        log.debug("Neues JWT geholt, läuft ab in %.0fs", _token_expires - time.monotonic())
-        return _token
+    async with _token_lock:
+        if _token and time.monotonic() < _token_expires - 30:
+            return _token
+        async with httpx.AsyncClient(base_url=settings.raumzeit_base_url) as c:
+            r = await c.post(
+                "/private/api/v1/authentication",
+                json={"login": settings.raumzeit_login, "password": settings.raumzeit_password},
+            )
+            r.raise_for_status()
+            _token = r.json()["accessToken"]
+            _token_expires = _jwt_expiry(_token)
+            log.debug("Neues JWT geholt, läuft ab in %.0fs", _token_expires - time.monotonic())
+            return _token
 
 
 def _client(token: str) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         base_url=settings.raumzeit_base_url,
         headers={"Authorization": f"Bearer {token}"},
+        timeout=30.0,
     )
 
 
@@ -781,18 +784,33 @@ async def build_course_index() -> int:
 
 async def fetch_course_brute_force(course_semester: str, date: str | None = None) -> dict:
     """
-    Ignoriert den Index – probt alle bekannten Suffixe direkt für diesen Kurs.
+    Prüft zuerst den Index, falls leer: probt alle bekannten Suffixe direkt für diesen Kurs.
     Aktualisiert den Index mit neu entdeckten Varianten.
     """
     parts = course_semester.split(".")
     abbr, sem = parts[0], parts[1]
     base_key = f"{abbr}.{sem}"
-    all_suffixes = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ") + [
-        "DF", "AB", "AF", "BF", "KP", "KU", "PU", "U1", "U2", "U61", "U62", "U63"
-    ]
-    probe_results = await asyncio.gather(*[_probe_course_key(f"{base_key}.{s}") for s in all_suffixes])
-    valid_variants = [base_key] + [f"{base_key}.{s}" for s, ok in zip(all_suffixes, probe_results) if ok]
+    
+    # 1. Zuerst in der DB schauen
+    valid_variants = await db.get_course_variants(abbr, int(sem))
+    
+    # 2. Falls nichts in der DB, Brute-Force
+    if not valid_variants:
+        log.info("Brute-Force %s: Keinen Index gefunden, starte Probing...", base_key)
+        all_suffixes = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ") + [
+            "DF", "AB", "AF", "BF", "KP", "KU", "PU", "U1", "U2", "U61", "U62", "U63"
+        ]
+        probe_results = await asyncio.gather(*[_probe_course_key(f"{base_key}.{s}") for s in all_suffixes])
+        valid_variants = [base_key] + [f"{base_key}.{s}" for s, ok in zip(all_suffixes, probe_results) if ok]
+        
+        # Index mit neu entdeckten Varianten aktualisieren
+        entries = [{"full_key": base_key, "abbreviation": abbr, "semester": int(sem), "group_letter": ""}]
+        for s, ok in zip(all_suffixes, probe_results):
+            if ok:
+                entries.append({"full_key": f"{base_key}.{s}", "abbreviation": abbr, "semester": int(sem), "group_letter": s})
+        await db.save_course_index(entries)
 
+    # 3. Daten abrufen
     if date:
         fetch_kwargs = {"date": date}
     else:
@@ -806,15 +824,8 @@ async def fetch_course_brute_force(course_semester: str, date: str | None = None
             b["gruppe"] = key
         all_bookings.extend(bookings)
 
-    # Index mit neu entdeckten Varianten aktualisieren
-    entries = [{"full_key": base_key, "abbreviation": abbr, "semester": int(sem), "group_letter": ""}]
-    for s, ok in zip(all_suffixes, probe_results):
-        if ok:
-            entries.append({"full_key": f"{base_key}.{s}", "abbreviation": abbr, "semester": int(sem), "group_letter": s})
-    await db.save_course_index(entries)
-    log.info("Brute-Force %s: %d Varianten, %d Einträge", base_key, len(valid_variants), len(all_bookings))
-
     label = date or f"KW {_date.today().isocalendar()[1]}"
+    log.info("Abruf %s: %d Varianten, %d Einträge", base_key, len(valid_variants), len(all_bookings))
     return {"course_semester": course_semester, "queried_date": label, "bookings": all_bookings}
 
 
@@ -826,11 +837,12 @@ async def _probe_course_key(key: str) -> bool:
     async with _probe_sem:
         try:
             token = await _get_token()
-            async with _client(token) as c:
-                r = await c.get(
-                    f"/api/v1/timetables/coursesemester/{key}",
-                    headers={"Accept": "text/calendar"},
-                )
+            async with httpx.AsyncClient(
+                base_url=settings.raumzeit_base_url,
+                headers={"Authorization": f"Bearer {token}", "Accept": "text/calendar"},
+                timeout=10.0,
+            ) as c:
+                r = await c.get(f"/api/v1/timetables/coursesemester/{key}")
             return r.status_code == 200
         except Exception:
             return False

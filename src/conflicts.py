@@ -25,28 +25,23 @@ async def find_timetable_conflicts(course_abbr: str, base_sem: int, target_sem: 
     
     log.info(f"Suche Konflikte für {course_abbr}: Sem {base_sem} vs {target_sem} (Filter: {module_filter})")
 
-    # 2. Alle Daten sammeln
-    # Wir nutzen brute_force, um wirklich alle Gruppen zu erwischen
+    # 2. Daten für die gesamte Woche sammeln
+    # Wir rufen brute_force ohne Datum auf, um die ganze Woche zu erhalten
     base_key = f"{course_abbr}.{base_sem}"
     target_key = f"{course_abbr}.{target_sem}"
     
-    base_events = []
-    target_events = []
+    # Parallelisierung der beiden Semester-Abfragen (ganze Woche)
+    b_res, t_res = await asyncio.gather(
+        raumzeit.fetch_course_brute_force(base_key),
+        raumzeit.fetch_course_brute_force(target_key)
+    )
+    
+    base_events = b_res.get("bookings", [])
+    target_events = t_res.get("bookings", [])
 
-    # Parallelisierung der Abfragen pro Tag
-    async def fetch_day(d):
-        b_res = await raumzeit.fetch_course_brute_force(base_key, d)
-        t_res = await raumzeit.fetch_course_brute_force(target_key, d)
-        b = b_res.get("bookings", [])
-        t = t_res.get("bookings", [])
-        for e in b: e['date'] = d
-        for e in t: e['date'] = d
-        return b, t
-
-    results = await asyncio.gather(*[fetch_day(d) for d in dates_to_check])
-    for b_list, t_list in results:
-        base_events.extend(b_list)
-        target_events.extend(t_list)
+    # Falls wir nur bestimmte Tage wollen (Mo-Fr), filtern wir hier
+    base_events = [e for e in base_events if e.get("date") in dates_to_check]
+    target_events = [e for e in target_events if e.get("date") in dates_to_check]
 
     # 3. Filtern der Basis-Events (falls gewünscht)
     if module_filter:
@@ -57,17 +52,20 @@ async def find_timetable_conflicts(course_abbr: str, base_sem: int, target_sem: 
         ]
 
     if not base_events:
+        err_msg = "Keine Vorlesungen für das Basis-Semester gefunden."
+        if module_filter:
+            err_msg = f"Keine Vorlesungen für das Basis-Semester mit dem Filter '{module_filter}' gefunden."
+        
         return {
             "course": course_abbr,
             "base_sem": base_sem,
             "target_sem": target_sem,
             "filter": module_filter,
             "conflicts": [],
-            "error": "Keine Vorlesungen für das Basis-Semester gefunden."
+            "error": err_msg
         }
 
     # 4. Kollisions-Prüfung
-    # Wir gruppieren Konflikte nach dem Basis-Event (z.B. nach dem E-Technik Termin)
     conflicts_found = []
     
     # Hilfsfunktion für Overlap
