@@ -8,6 +8,7 @@ dist/
 .pytest_cache/
 .ruff_cache/
 data/
+logs/
 
 # KI-spezifische Dateien (nur lokal)
 .claude/

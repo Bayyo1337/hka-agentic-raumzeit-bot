@@ -38,9 +38,14 @@ NETWORK_ERROR_THRESHOLD = 15  # Nach 15 Fehlern in Folge Neustart erzwingen
 from rich.logging import RichHandler
 
 # 1. File Logging (Detailed, Rotating)
-os.makedirs("data", exist_ok=True)
+os.makedirs("logs", exist_ok=True)
+log_file = "logs/bot.txt"
+# Sicherstellen, dass die Datei existiert (als .txt wie gewünscht)
+if not os.path.exists(log_file):
+    with open(log_file, "a") as f: pass
+
 file_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-file_handler = RotatingFileHandler("data/bot.log", maxBytes=5*1024*1024, backupCount=3, encoding="utf-8")
+file_handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=3, encoding="utf-8")
 file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(file_formatter)
 

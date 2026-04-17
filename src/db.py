@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 
 log = logging.getLogger(__name__)
 
-DB_PATH = os.environ.get("DB_PATH", "data/bot.db")
+DB_PATH = os.environ.get("DB_PATH", "logs/bot.db")
 
 
 async def init() -> None:
