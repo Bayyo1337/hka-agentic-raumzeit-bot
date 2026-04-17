@@ -826,7 +826,12 @@ async def fetch_course_brute_force(course_semester: str, date: str | None = None
 
     label = date or f"KW {_date.today().isocalendar()[1]}"
     log.info("Abruf %s: %d Varianten, %d Einträge", base_key, len(valid_variants), len(all_bookings))
-    return {"course_semester": course_semester, "queried_date": label, "bookings": all_bookings}
+    return {
+        "course_semester": course_semester, 
+        "queried_date": label, 
+        "bookings": all_bookings,
+        "all_groups": [v.split(".")[-1] if "." in v[len(base_key):] else "" for v in valid_variants]
+    }
 
 
 _probe_sem = asyncio.Semaphore(20)

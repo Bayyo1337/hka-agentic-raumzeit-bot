@@ -131,5 +131,7 @@ async def find_timetable_conflicts(course_abbr: str, base_sem: int, target_sem: 
         "base_sem": base_sem,
         "target_sem": target_sem,
         "filter": module_filter,
-        "results": conflicts_found
+        "results": conflicts_found,
+        "base_groups": b_res.get("all_groups", []),
+        "target_groups": t_res.get("all_groups", [])
     }

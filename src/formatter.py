@@ -525,6 +525,7 @@ def _fmt_conflicts(result: dict) -> str:
         by_day[day].append(entry)
         
     day_order = {d: i for i, d in enumerate(_WEEKDAY_DE)}
+    all_base_groups = set(result.get("base_groups", []))
     
     for day in sorted(by_day.keys(), key=lambda d: day_order.get(d, 99)):
         lines.append(f"📅 *{day}:*")
@@ -534,9 +535,15 @@ def _fmt_conflicts(result: dict) -> str:
         for entry in sorted_entries:
             b = entry["base"]
             conflicts = entry["conflicts"]
-            gruppen = sorted([g for g in entry["gruppen"] if g])
+            gruppen = set(g for g in entry["gruppen"] if g)
             
-            grp_info = f" (Gruppe {', '.join(gruppen)})" if gruppen else ""
+            # Wenn alle Gruppen abgedeckt sind, ist es eine Pflichtveranstaltung -> Info weglassen
+            if all_base_groups and (all_base_groups - {""}) <= gruppen:
+                grp_info = ""
+            else:
+                sorted_grp = sorted(list(gruppen))
+                grp_info = f" (Gruppe {', '.join(sorted_grp)})" if sorted_grp else ""
+            
             lines.append(f"📍 *{b['name']}*{grp_info}")
             lines.append(f"   Zeit: {b.get('start_clean', b['start'])}–{b.get('end_clean', b['end'])}")
             
