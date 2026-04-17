@@ -31,7 +31,7 @@ Wenn alle Prüfungen erfolgreich sind:
 ### 4. Dokumentation der Lösung
 Falls dir vom `strategist` ein Issue-Dateipfad (aus `/issues/`) übergeben wurde:
 - Schreibe eine Zusammenfassung der Lösung (was wurde getan, welche Dateien wurden geändert, Commit-Hash) ans Ende dieser Datei.
-- Verschiebe die Datei anschließend in den Ordner `issues/done/`.
+- **Wichtig:** Erstelle den Ordner `issues/done/` (`mkdir -p issues/done`) und verschiebe die Datei anschließend dorthin (`mv "..." issues/done/`).
 - Falls kein Pfad vorhanden ist: Ignoriere diesen Schritt.
 
 ### 5. Git Push (Integration)

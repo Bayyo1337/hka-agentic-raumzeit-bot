@@ -1,16 +1,21 @@
 import asyncio
 import logging
+import re
 from datetime import date, timedelta
 from src import tools as raumzeit
 
 log = logging.getLogger("src.conflicts")
+
+def _normalize(s: str) -> str:
+    """Radikale Normalisierung für robusten Vergleich."""
+    return re.sub(r'[^a-z0-9]', '', s.lower())
 
 def _parse_time(time_str: str) -> int:
     """Wandelt 'HH:MM' in Minuten seit Mitternacht um."""
     try:
         h, m = map(int, time_str.split(':'))
         return h * 60 + m
-    except:
+    except Exception:
         return 0
 
 async def find_timetable_conflicts(course_abbr: str, base_sem: int, target_sem: int, module_filter: str | None = None) -> dict:
@@ -43,26 +48,47 @@ async def find_timetable_conflicts(course_abbr: str, base_sem: int, target_sem: 
     base_events = [e for e in base_events if e.get("date") in dates_to_check]
     target_events = [e for e in target_events if e.get("date") in dates_to_check]
 
-    # 3. Filtern der Basis-Events (falls gewünscht)
+    # 3. Filtern (Basis oder Ziel)
     if module_filter:
-        f = module_filter.lower()
-        base_events = [
+        f = _normalize(module_filter)
+        
+        # Check base matches
+        base_matches = [
             e for e in base_events 
-            if f in (e.get("name") or "").lower() or f in (e.get("module") or "").lower()
+            if f in _normalize(e.get("name") or "") or f in _normalize(e.get("module") or "")
         ]
+        
+        if base_matches:
+            log.info(f"Filter '{module_filter}' im Basis-Semester gefunden (%d Einträge)", len(base_matches))
+            base_events = base_matches
+        else:
+            # Check target matches
+            target_matches = [
+                e for e in target_events 
+                if f in _normalize(e.get("name") or "") or f in _normalize(e.get("module") or "")
+            ]
+            if target_matches:
+                log.info(f"Filter '{module_filter}' im Ziel-Semester gefunden (%d Einträge)", len(target_matches))
+                target_events = target_matches
+            else:
+                err_msg = f"Keine Vorlesungen für den Filter '{module_filter}' in beiden Semestern gefunden."
+                return {
+                    "course": course_abbr,
+                    "base_sem": base_sem,
+                    "target_sem": target_sem,
+                    "filter": module_filter,
+                    "results": [],
+                    "error": err_msg
+                }
 
     if not base_events:
-        err_msg = "Keine Vorlesungen für das Basis-Semester gefunden."
-        if module_filter:
-            err_msg = f"Keine Vorlesungen für das Basis-Semester mit dem Filter '{module_filter}' gefunden."
-        
         return {
             "course": course_abbr,
             "base_sem": base_sem,
             "target_sem": target_sem,
             "filter": module_filter,
-            "conflicts": [],
-            "error": err_msg
+            "results": [],
+            "error": "Keine Vorlesungen im Basis-Semester gefunden."
         }
 
     # 4. Kollisions-Prüfung
@@ -70,7 +96,8 @@ async def find_timetable_conflicts(course_abbr: str, base_sem: int, target_sem: 
     
     # Hilfsfunktion für Overlap
     def overlaps(e1, e2):
-        if e1['date'] != e2['date']: return False
+        if e1['date'] != e2['date']:
+            return False
         
         # Zeit-Extraktion (falls ISO-String)
         s1_str = e1['start'].split('T')[1][:5] if 'T' in e1['start'] else e1['start']

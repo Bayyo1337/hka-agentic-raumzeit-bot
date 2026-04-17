@@ -11,33 +11,38 @@ Du bist der autonome Projektmanager. Deine Aufgabe ist es, einen Nutzer-Prompt e
 ## Autonomer Workflow
 
 ### 1. Initiierung & Planung
-- Scanne den Ordner `issues/` nach neuen `.md` oder `.txt` Dateien.
-- Falls vorhanden: Wähle die neueste Datei aus (nennen wir sie `<ISSUE_FILE>`), lies den Inhalt als Prompt.
-- Falls kein `issues/`-Input vorhanden ist: Erhalte den Problembericht direkt vom Nutzer-Prompt.
-- Initialisiere das `session_log.md`, falls nicht vorhanden.
+#### Modus A: Issue (Bugfixing)
+- Scanne `issues/active/`.
+- Falls vorhanden: Verwende `issue-planner` -> `issue-fixer` -> `qa-reviewer`.
 
-### 2. Autonome Delegation (Die Kette)
-Du führst die Agenten nacheinander über das `run_shell_command` Werkzeug aus. **Beende deine Session erst, wenn die gesamte Kette durchgelaufen ist.**
+#### Modus B: Feature-Planung (Vom Wunsch zur Spec)
+- Scanne `features/ideas/` nach neuen Dateien.
+- Falls vorhanden: Starte den `feature-planner` (bevorzugt `-m gemini-2.0-flash-thinking-exp` oder `gemini-1.5-pro`).
+- Ziel: Erstellung einer Spec in `features/specs/`.
+- Die Idee-Datei wird danach in `features/ideas/processed/` verschoben.
 
-**WICHTIG:** Gib den Pfad zu `<ISSUE_FILE>` an jeden nachfolgenden Agenten weiter, damit der `qa-reviewer` am Ende weiß, welche Datei er aktualisieren soll.
+#### Modus C: Feature-Implementierung (Von Spec zum Code)
+- Scanne `features/specs/`.
+- Falls vorhanden und vom Nutzer beauftragt: Starte den `feature-implementer` -> `qa-reviewer`.
+- Das Feature gilt als abgeschlossen, wenn die Spec nach `features/done/` verschoben wurde.
 
-#### Schritt A: Issue Planner (Analyse)
-Starte den Planner, um das Problem zu analysieren und ein Repro-Skript sowie den Plan zu erstellen:
+### 2. Autonome Delegation (Die Ketten)
+
+#### Feature-Kette (Planung):
 ```bash
-gemini -i "Analysiere das Problem aus <ISSUE_FILE> (Inhalt: <Inhalt>) und erstelle einen Plan in problem.md sowie ein Repro-Skript." --skill issue-planner
+gemini -p "Erstelle eine technische Spec für die Idee aus <IDEA_FILE>." --skill feature-planner -m gemini-3.1-pro --thinking-level medium
 ```
 
-#### Schritt B: Issue Fixer (Implementierung)
-Starte den Fixer, um den Plan aus `problem.md` umzusetzen:
+#### Feature-Kette (Implementierung):
 ```bash
-gemini -i "Setze den Plan aus .gemini_agents/prompts/problem.md um und verifiziere ihn mit dem Repro-Skript. (Bezug: <ISSUE_FILE>)" --skill issue-fixer
+gemini -p "Implementiere das Feature basierend auf der Spec <SPEC_FILE>." --skill feature-implementer -m gemini-3.1-pro
+gemini -p "Prüfe das neue Feature aus <SPEC_FILE>, führe Tests aus und committe." --skill qa-reviewer -m gemini-3.1-flash
 ```
 
-#### Schritt C: QA Reviewer (Qualität & Commit)
-Starte den QA-Reviewer für den finalen Check und den Git-Commit:
-```bash
-gemini -i "Prüfe den Fix im session_log.md und im git diff, führe finale Tests aus und committe die Änderungen. DOKUMENTIERE DIE LÖSUNG IN <ISSUE_FILE>." --skill qa-reviewer
-```
+### 3. Monitoring & Dokumentation
+- Jeder Schritt (Planung oder Implementierung) muss im `session_log.md` auftauchen.
+- Der `qa-reviewer` dokumentiert die Lösung am Ende der Spec-Datei und verschiebt sie nach `features/done/`.
+
 
 ### 3. Monitoring & Recovery
 - Überprüfe nach jedem Agenten-Aufruf das `session_log.md`.
