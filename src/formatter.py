@@ -68,17 +68,21 @@ def _dedup_bookings(bookings: list[dict]) -> list[dict]:
             m_end = _to_hhmm(m.get("end", ""))
             m_room = m.get("room", "")
             m_date = m.get("date", "")
+            
             if m_start == start and m_end == end and m_room == room and m_date == date_str:
+                m_mod = m.get("module") or m.get("name")
+                b_mod = module or name
+                
                 # Prüfen, ob Dozent gleich ist ODER Modulname sehr ähnlich
                 if (lecturer and m.get("lecturer") == lecturer) or \
-                   (module and _norm_mod(module) in _norm_mod(m.get("module", ""))) or \
-                   (m.get("module") and _norm_mod(m.get("module", "")) in _norm_mod(module)):
+                   (b_mod and _norm_mod(b_mod) in _norm_mod(m_mod or "")) or \
+                   (m_mod and _norm_mod(m_mod or "") in _norm_mod(b_mod or "")):
                     # Merge it!
                     names = m.get("name", "").split(", ")
                     if name not in names:
                         names.append(name)
                         m["name"] = ", ".join(names)
-                    if len(module) > len(m.get("module", "")):
+                    if module and len(module) > len(m.get("module", "")):
                         m["module"] = module
                     found = True
                     break
@@ -218,7 +222,8 @@ def _fmt_room(result: dict) -> str:
         if len(sorted_days) == 1:
             all_lines.extend(_render_timeline(by_day[day], date_label, f"🏫 *{room}*"))
         else:
-            if i == 0: all_lines.append(f"🏫 *{room}* (Wochenübersicht)")
+            if i == 0:
+                all_lines.append(f"🏫 *{room}* (Wochenübersicht)")
             all_lines.extend(_render_timeline(by_day[day], day))
 
     return "\n".join(all_lines)
@@ -287,8 +292,10 @@ def _fmt_lecturer(result: dict) -> str:
     
     lines = [header]
     if email or sprechzeit:
-        if email: lines.append(f"📧 {email}")
-        if sprechzeit: lines.append(f"🕒 *Sprechzeit:* {sprechzeit}")
+        if email:
+            lines.append(f"📧 {email}")
+        if sprechzeit:
+            lines.append(f"🕒 *Sprechzeit:* {sprechzeit}")
         lines.append("")
 
     if not bookings:
@@ -296,35 +303,35 @@ def _fmt_lecturer(result: dict) -> str:
         return "\n".join(lines)
 
     from collections import defaultdict
-    by_day_room: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+    by_day: dict[str, list] = defaultdict(list)
     for b in bookings:
         d_name = b.get("day")
         if not d_name and b.get("date"):
             try:
                 dt = _date.fromisoformat(b["date"])
                 d_name = _WEEKDAY_DE[dt.weekday()]
-            except: pass
+            except Exception:
+                pass
         d_name = d_name or "Termine"
-        room = b.get("room") or "Unbekannter Raum"
-        by_day_room[d_name][room].append(b)
+        by_day[d_name].append(b)
 
     _day_order = {d: i for i, d in enumerate(_WEEKDAY_DE)}
-    sorted_days = sorted(by_day_room.keys(), key=lambda d: _day_order.get(d, 99))
+    sorted_days = sorted(by_day.keys(), key=lambda d: _day_order.get(d, 99))
 
     all_lines = []
     if email or sprechzeit:
-        if email: all_lines.append(f"📧 {email}")
-        if sprechzeit: all_lines.append(f"🕒 *Sprechzeit:* {sprechzeit}")
+        if email:
+            all_lines.append(f"📧 {email}")
+        if sprechzeit:
+            all_lines.append(f"🕒 *Sprechzeit:* {sprechzeit}")
         all_lines.append("")
 
     total_days = len(sorted_days)
     for day in sorted_days:
-        rooms_on_day = by_day_room[day]
-        for room in sorted(rooms_on_day.keys()):
-            date_label = _fmt_date(queried_date) if total_days == 1 and queried_date and queried_date != "heute" else day
-            deduplicated = _dedup_bookings(rooms_on_day[room])
-            all_lines.extend(_render_timeline(deduplicated, date_label, f"🏫 *{room}*"))
-            all_lines.append("")
+        date_label = _fmt_date(queried_date) if total_days == 1 and queried_date and queried_date != "heute" else day
+        # Alle Buchungen des Tages (raumübergreifend) in eine Timeline rendern
+        all_lines.extend(_render_timeline(by_day[day], date_label))
+        all_lines.append("")
 
     # Header ganz am Anfang einfügen
     return (header + "\n" + "\n".join(all_lines)).strip()
@@ -337,17 +344,23 @@ def _fmt_lecturer_info(result: dict) -> str:
     name = result.get("name", "?")
     email = result.get("email")
     sprechzeit = result.get("sprechzeit")
+    room = result.get("room")
     
     lines = [f"👤 *Dozenten-Info: {name}*"]
-    if email: lines.append(f"📧 E-Mail: {email}")
-    if sprechzeit: lines.append(f"🕒 Sprechzeit: {sprechzeit}")
-    if not email and not sprechzeit:
+    if email:
+        lines.append(f"📧 E-Mail: {email}")
+    if sprechzeit:
+        lines.append(f"🕒 Sprechzeit: {sprechzeit}")
+    if room:
+        lines.append(f"🏫 Raum/Büro: {room}")
+    if not email and not sprechzeit and not room:
         lines.append("Keine Kontaktinformationen hinterlegt.")
     return "\n".join(lines)
 
 
 def _fmt_mensa(result: dict) -> str:
-    if "error" in result: return f"❌ {result['error']}"
+    if "error" in result:
+        return f"❌ {result['error']}"
     
     canteen = result.get("canteen", "Mensa")
     date_str = _fmt_date(result.get("date", ""))
@@ -381,7 +394,8 @@ def _fmt_mensa(result: dict) -> str:
 
 
 def _fmt_mensa_details(result: dict) -> str:
-    if "error" in result: return f"❌ {result['error']}"
+    if "error" in result:
+        return f"❌ {result['error']}"
     
     name = result.get("name", "Unbekanntes Gericht")
     allergens = result.get("allergens", [])
@@ -437,12 +451,15 @@ def _fmt_calendar(result) -> str:
         return "Kein Hochschulkalender verfügbar."
     lines = ["📆 *Hochschulkalender*"]
     for item in items[:20]:
-        if not isinstance(item, dict): continue
+        if not isinstance(item, dict):
+            continue
         name = item.get("name", item.get("title", ""))
         start = item.get("start", item.get("startDate", ""))
         end = item.get("end", item.get("endDate", ""))
-        if start: start = _fmt_date(start[:10]) if len(start) >= 10 else start
-        if end: end = _date.fromisoformat(end[:10]) if len(end) >= 10 else end
+        if start:
+            start = _fmt_date(start[:10]) if len(start) >= 10 else start
+        if end:
+            end = _date.fromisoformat(end[:10]) if len(end) >= 10 else end
         if start and end and start != end:
             lines.append(f"• {name}: {start} – {end}")
         elif start:
@@ -453,7 +470,8 @@ def _fmt_calendar(result) -> str:
 
 
 def _fmt_conflicts(result: dict) -> str:
-    if "error" in result: return f"❌ {result['error']}"
+    if "error" in result:
+        return f"❌ {result['error']}"
     
     course = result.get("course", "?")
     base_sem = result.get("base_sem", "?")
@@ -461,47 +479,82 @@ def _fmt_conflicts(result: dict) -> str:
     module_filter = result.get("filter")
     results = result.get("results", [])
     
-    if not results:
-        return f"✅ Keine Konflikte für {module_filter or 'den Plan'} in {course} (Sem {base_sem} vs {target_sem}) gefunden."
+    # 1. Filtern: Nur Einträge mit echten Konflikten behalten
+    conflicts_only = [r for r in results if r.get("conflicts")]
     
+    if not conflicts_only:
+        f_text = f" für '{module_filter}'" if module_filter else ""
+        return f"✅ Keine Konflikte{f_text} in {course} (Sem {base_sem} vs {target_sem}) gefunden."
+    
+    # 2. Deduplizieren: Gleiche Vorlesung, Zeit und Konflikte zusammenfassen
+    # Key: (Name, Datum, Start, Ende, Stringified-Conflicts)
+    # Wert: {base_event, conflicts, gruppen: set}
+    dedup = {}
+    for entry in conflicts_only:
+        b = entry["base_event"]
+        c = entry["conflicts"]
+        
+        # Konflikte sortieren und stringifizieren für den Key
+        c_sig = "|".join(sorted([f"{x['name']}{x['start']}{x['gruppe']}" for x in c]))
+        key = (b["name"], b["date"], b.get("start_clean", b["start"]), b.get("end_clean", b["end"]), c_sig)
+        
+        if key not in dedup:
+            dedup[key] = {
+                "base": b,
+                "conflicts": c,
+                "gruppen": {b.get("gruppe").split(".")[-1] if b.get("gruppe") and "." in b.get("gruppe") else b.get("gruppe")}
+            }
+        else:
+            g = b.get("gruppe").split(".")[-1] if b.get("gruppe") and "." in b.get("gruppe") else b.get("gruppe")
+            dedup[key]["gruppen"].add(g)
+
     lines = [f"⚠️ *Konflikt-Analyse: {course}*"]
     lines.append(f"Vergleich: Semester {base_sem} ↔️ Semester {target_sem}")
     if module_filter:
         lines.append(f"Filter: \"{module_filter}\"")
     lines.append("")
     
-    # Gruppieren nach Wochentag
+    # 3. Gruppieren nach Wochentag
     from collections import defaultdict
     by_day = defaultdict(list)
-    for entry in results:
-        day = entry["base_event"].get("day")
+    for entry in dedup.values():
+        b = entry["base"]
+        day = b.get("day")
         if not day:
             try:
-                dt = _date.fromisoformat(entry["base_event"]["date"])
+                dt = _date.fromisoformat(b["date"])
                 day = _WEEKDAY_DE[dt.weekday()]
-            except:
+            except Exception:
                 day = "Unbekannter Tag"
         by_day[day].append(entry)
         
     day_order = {d: i for i, d in enumerate(_WEEKDAY_DE)}
+    all_base_groups = set(result.get("base_groups", []))
     
     for day in sorted(by_day.keys(), key=lambda d: day_order.get(d, 99)):
         lines.append(f"📅 *{day}:*")
-        for entry in by_day[day]:
-            b = entry["base_event"]
+        # Innerhalb des Tages nach Zeit sortieren
+        sorted_entries = sorted(by_day[day], key=lambda x: x["base"].get("start_clean", x["base"]["start"]))
+        
+        for entry in sorted_entries:
+            b = entry["base"]
             conflicts = entry["conflicts"]
+            gruppen = set(g for g in entry["gruppen"] if g)
             
-            group_info = f" (Gruppe {b.get('gruppe')})" if b.get("gruppe") else ""
-            lines.append(f"📍 *{b['name']}*{group_info}")
+            # Wenn alle Gruppen abgedeckt sind, ist es eine Pflichtveranstaltung -> Info weglassen
+            if all_base_groups and (all_base_groups - {""}) <= gruppen:
+                grp_info = ""
+            else:
+                sorted_grp = sorted(list(gruppen))
+                grp_info = f" (Gruppe {', '.join(sorted_grp)})" if sorted_grp else ""
+            
+            lines.append(f"📍 *{b['name']}*{grp_info}")
             lines.append(f"   Zeit: {b.get('start_clean', b['start'])}–{b.get('end_clean', b['end'])}")
             
-            if not conflicts:
-                lines.append("   ✅ _Keine Überschneidungen in diesem Slot._")
-            else:
-                for c in conflicts:
-                    c_group = f" [{c.get('gruppe')}]" if c.get("gruppe") else ""
-                    lines.append(f"   🔴 Konflikt mit: *{c['name']}*{c_group}")
-                    lines.append(f"      ({c.get('start_clean', c['start'])}–{c.get('end_clean', c['end'])} in {c.get('room', '?')})")
+            for c in conflicts:
+                c_group = f" [{c.get('gruppe')}]" if c.get("gruppe") else ""
+                lines.append(f"   🔴 Konflikt mit: *{c['name']}*{c_group}")
+                lines.append(f"      ({c.get('start_clean', c['start'])}–{c.get('end_clean', c['end'])} in {c.get('room', '?')})")
             lines.append("")
             
     return "\n".join(lines).strip()

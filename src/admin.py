@@ -2,6 +2,7 @@
 Admin-Kommando-Handler für den Telegram-Bot.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from telegram import Update
@@ -396,17 +397,20 @@ async def cmd_togglemap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 @_require_admin
 async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    from src.bot import _run_index_build, _run_lecturer_build
-    msg = await update.message.reply_text("⏳ Kurs-Index & Dozenten-Index werden neu aufgebaut...")
-    try:
-        # Wir führen die Builds hier asynchron aus
-        count = await raumzeit.build_course_index()
-        await msg.edit_text(f"✅ Kurs-Index: {count} Einträge\n⏳ Baue Dozenten-Index...")
-        lecturer_count = await raumzeit.build_lecturer_index()
-        await msg.edit_text(
-            f"✅ Kurs-Index: {count} Einträge\n"
-            f"✅ Dozenten-Index: {lecturer_count} gematcht"
-        )
-    except Exception as exc:
-        log.exception("Index-Aufbau fehlgeschlagen")
-        await msg.edit_text(f"⚠️ Fehler beim Index-Aufbau: {exc}")
+    msg = await update.message.reply_text("⏳ Sync im Hintergrund gestartet. Du kannst den Bot derweil normal weiter nutzen. (Siehe Terminal für Details)")
+    
+    async def _bg_sync():
+        try:
+            # Wir führen die Builds hier asynchron aus (Log-Ausgaben landen im Terminal)
+            count = await raumzeit.build_course_index()
+            lecturer_count = await raumzeit.build_lecturer_index()
+            await msg.edit_text(
+                f"✅ Kurs-Index: {count} Einträge\n"
+                f"✅ Dozenten-Index: {lecturer_count} gematcht\n"
+                "✅ Sync abgeschlossen!"
+            )
+        except Exception as exc:
+            log.exception("Index-Aufbau im Hintergrund fehlgeschlagen")
+            await msg.edit_text(f"⚠️ Fehler beim Sync: {exc}")
+
+    asyncio.create_task(_bg_sync())

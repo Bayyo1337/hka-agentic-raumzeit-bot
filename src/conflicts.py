@@ -1,16 +1,21 @@
 import asyncio
 import logging
+import re
 from datetime import date, timedelta
 from src import tools as raumzeit
 
 log = logging.getLogger("src.conflicts")
+
+def _normalize(s: str) -> str:
+    """Radikale Normalisierung für robusten Vergleich."""
+    return re.sub(r'[^a-z0-9]', '', s.lower())
 
 def _parse_time(time_str: str) -> int:
     """Wandelt 'HH:MM' in Minuten seit Mitternacht um."""
     try:
         h, m = map(int, time_str.split(':'))
         return h * 60 + m
-    except:
+    except Exception:
         return 0
 
 async def find_timetable_conflicts(course_abbr: str, base_sem: int, target_sem: int, module_filter: str | None = None) -> dict:
@@ -25,36 +30,56 @@ async def find_timetable_conflicts(course_abbr: str, base_sem: int, target_sem: 
     
     log.info(f"Suche Konflikte für {course_abbr}: Sem {base_sem} vs {target_sem} (Filter: {module_filter})")
 
-    # 2. Alle Daten sammeln
-    # Wir nutzen brute_force, um wirklich alle Gruppen zu erwischen
+    # 2. Daten für die gesamte Woche sammeln
+    # Wir rufen brute_force ohne Datum auf, um die ganze Woche zu erhalten
     base_key = f"{course_abbr}.{base_sem}"
     target_key = f"{course_abbr}.{target_sem}"
     
-    base_events = []
-    target_events = []
+    # Parallelisierung der beiden Semester-Abfragen (ganze Woche)
+    b_res, t_res = await asyncio.gather(
+        raumzeit.fetch_course_brute_force(base_key),
+        raumzeit.fetch_course_brute_force(target_key)
+    )
+    
+    base_events = b_res.get("bookings", [])
+    target_events = t_res.get("bookings", [])
 
-    # Parallelisierung der Abfragen pro Tag
-    async def fetch_day(d):
-        b_res = await raumzeit.fetch_course_brute_force(base_key, d)
-        t_res = await raumzeit.fetch_course_brute_force(target_key, d)
-        b = b_res.get("bookings", [])
-        t = t_res.get("bookings", [])
-        for e in b: e['date'] = d
-        for e in t: e['date'] = d
-        return b, t
+    # Falls wir nur bestimmte Tage wollen (Mo-Fr), filtern wir hier
+    base_events = [e for e in base_events if e.get("date") in dates_to_check]
+    target_events = [e for e in target_events if e.get("date") in dates_to_check]
 
-    results = await asyncio.gather(*[fetch_day(d) for d in dates_to_check])
-    for b_list, t_list in results:
-        base_events.extend(b_list)
-        target_events.extend(t_list)
-
-    # 3. Filtern der Basis-Events (falls gewünscht)
+    # 3. Filtern (Basis oder Ziel)
     if module_filter:
-        f = module_filter.lower()
-        base_events = [
+        f = _normalize(module_filter)
+        
+        # Check base matches
+        base_matches = [
             e for e in base_events 
-            if f in (e.get("name") or "").lower() or f in (e.get("module") or "").lower()
+            if f in _normalize(e.get("name") or "") or f in _normalize(e.get("module") or "")
         ]
+        
+        if base_matches:
+            log.info(f"Filter '{module_filter}' im Basis-Semester gefunden (%d Einträge)", len(base_matches))
+            base_events = base_matches
+        else:
+            # Check target matches
+            target_matches = [
+                e for e in target_events 
+                if f in _normalize(e.get("name") or "") or f in _normalize(e.get("module") or "")
+            ]
+            if target_matches:
+                log.info(f"Filter '{module_filter}' im Ziel-Semester gefunden (%d Einträge)", len(target_matches))
+                target_events = target_matches
+            else:
+                err_msg = f"Keine Vorlesungen für den Filter '{module_filter}' in beiden Semestern gefunden."
+                return {
+                    "course": course_abbr,
+                    "base_sem": base_sem,
+                    "target_sem": target_sem,
+                    "filter": module_filter,
+                    "results": [],
+                    "error": err_msg
+                }
 
     if not base_events:
         return {
@@ -62,17 +87,17 @@ async def find_timetable_conflicts(course_abbr: str, base_sem: int, target_sem: 
             "base_sem": base_sem,
             "target_sem": target_sem,
             "filter": module_filter,
-            "conflicts": [],
-            "error": "Keine Vorlesungen für das Basis-Semester gefunden."
+            "results": [],
+            "error": "Keine Vorlesungen im Basis-Semester gefunden."
         }
 
     # 4. Kollisions-Prüfung
-    # Wir gruppieren Konflikte nach dem Basis-Event (z.B. nach dem E-Technik Termin)
     conflicts_found = []
     
     # Hilfsfunktion für Overlap
     def overlaps(e1, e2):
-        if e1['date'] != e2['date']: return False
+        if e1['date'] != e2['date']:
+            return False
         
         # Zeit-Extraktion (falls ISO-String)
         s1_str = e1['start'].split('T')[1][:5] if 'T' in e1['start'] else e1['start']
@@ -106,5 +131,7 @@ async def find_timetable_conflicts(course_abbr: str, base_sem: int, target_sem: 
         "base_sem": base_sem,
         "target_sem": target_sem,
         "filter": module_filter,
-        "results": conflicts_found
+        "results": conflicts_found,
+        "base_groups": b_res.get("all_groups", []),
+        "target_groups": t_res.get("all_groups", [])
     }

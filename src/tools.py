@@ -121,11 +121,15 @@ async def build_lecturer_index() -> int:
     keys = [f"{a}.{s}" for a in abbreviations for s in range(1, 8)]
     for i in range(0, len(keys), 40):
         await asyncio.gather(*[_fetch_course_contacts(k) for k in keys[i:i + 40]])
+        if (i // 40) % 4 == 0:
+            log.info("Dozenten-Index: Kurse scannen: %d/%d abgeschlossen", min(i + 40, len(keys)), len(keys))
     
     # Alle Räume scannen (Batch)
     room_names = [r.get("name") for r in rooms if isinstance(r, dict) and r.get("name")]
     for i in range(0, len(room_names), 40):
         await asyncio.gather(*[_fetch_room_lecturers(n) for n in room_names[i:i + 40]])
+        if (i // 40) % 4 == 0:
+            log.info("Dozenten-Index: Räume scannen: %d/%d abgeschlossen", min(i + 40, len(room_names)), len(room_names))
     
     log.info("Dozenten-Index: %d eindeutige Kürzel aus Raumzeit gesammelt", len(known))
 
@@ -141,19 +145,31 @@ async def build_lecturer_index() -> int:
             except Exception: break
             if r.status_code != 200: break
             
+            log.info("Dozenten-Index: h-ka.de: Seite %d geladen...", page)
             import re as _re
-            # Wir suchen nach den Zeilen-Blöcken (TR), um URL, Name und Email zusammenhängend zu finden
-            # Pattern für TR mit data-document-url
-            tr_pattern = r'<tr[^>]*data-document-url="(.*?)"[^>]*>.*?<span class="person__user-academic-title">(.*?)</span>.*?([\w.\-]+)<span[^>]*>spam prevention</span>@h-ka\.de'
-            for p_url, p_name, p_mail_user in _re.findall(tr_pattern, r.text, _re.DOTALL):
-                name = _re.sub(r'\s+', ' ', p_name).strip()
-                persons.append({
-                    "name": name,
-                    "vorname": p_mail_user.split(".")[0],
-                    "nachname": p_mail_user.split(".")[-1],
-                    "email": f"{p_mail_user}@h-ka.de",
-                    "url": p_url
-                })
+            
+            # Effizientes Splitting in TR-Blöcke, um Backtracking zu verhindern
+            tr_blocks = _re.findall(r'<tr[^>]*data-document-url=".*?".*?>.*?</tr>', r.text, _re.DOTALL)
+            for block in tr_blocks:
+                m_url = _re.search(r'data-document-url="(.*?)"', block)
+                m_title = _re.search(r'class="person__user-academic-title">(.*?)</span>', block)
+                m_name = _re.search(r'class="person__user-name-title">(.*?)</span>', block)
+                m_mail = _re.search(r'([\w.\-]+)<span[^>]*>spam prevention</span>@h-ka\.de', block)
+                
+                if m_url and m_mail:
+                    p_url = m_url.group(1)
+                    p_title = m_title.group(1) if m_title else ""
+                    p_name = m_name.group(1) if m_name else ""
+                    p_mail_user = m_mail.group(1)
+                    
+                    full_name = _re.sub(r'\s+', ' ', f"{p_title} {p_name}").strip()
+                    persons.append({
+                        "name": full_name,
+                        "vorname": p_mail_user.split(".")[0],
+                        "nachname": p_mail_user.split(".")[-1],
+                        "email": f"{p_mail_user}@h-ka.de",
+                        "url": p_url
+                    })
             
             if f"page={page + 1}" not in r.text and f"page%5D={page + 1}" not in r.text:
                 break
@@ -168,17 +184,24 @@ async def build_lecturer_index() -> int:
         prefix = _norm2ch(p["nachname"]) + _norm2ch(p["vorname"])
         alt_prefix = _norm(p["nachname"])[:4]
         
+        found = False
+        # Erst versuchen wir ein echtes Raumzeit-Kürzel zu finden (aa0001)
         for num in range(1, 21):
-            found = False
             for pre in [prefix, alt_prefix]:
                 kuerzel = f"{pre}{num:04d}"
                 if kuerzel in known:
                     matched[kuerzel] = {"name": p["name"], "email": p["email"]}
-                    if p.get("url"):
-                        to_scrape.append((kuerzel, p["url"]))
+                    if p.get("url"): to_scrape.append((kuerzel, p["url"]))
                     found = True
                     break
             if found: break
+        
+        # Falls kein Raumzeit-Match, trotzdem als UNKNOWN_... speichern (für Kontakt-Infos)
+        if not found:
+            # Wir nutzen das E-Mail-Präfix als Schlüssel
+            mail_key = p["email"].split("@")[0]
+            matched[mail_key] = {"name": p["name"], "email": p["email"]}
+            if p.get("url"): to_scrape.append((mail_key, p["url"]))
 
     # Sprechzeiten asynchron laden (mit Batching um Server zu schonen)
     if to_scrape:
@@ -189,16 +212,25 @@ async def build_lecturer_index() -> int:
                     r = await c.get(profile_url, headers={"User-Agent": "Mozilla/5.0"})
                 if r.status_code == 200:
                     import re as _re
-                    # Suche nach Sprechzeiten-Block (Sprechzeiten: <br/> ...)
-                    pattern = r'(?:Sprechzeit(?:en)?|Sprechstunde(?:n)?)\s*:\s*<br\s*/?>\s*(.*?)\s*</p>'
+                    # 1. Suche nach Sprechzeiten-Block (Sprechzeiten: <br/> ...)
+                    pattern = r'(?:Sprechzeit(?:en)?|Sprechstunde(?:n)?)\s*:\s*(?:<br\s*/?>\s*)?(.*?)\s*(?:</p>|<strong>|<li>)'
                     match = _re.search(pattern, r.text, _re.DOTALL | _re.IGNORECASE)
                     if match:
                         text = _re.sub(r'<[^>]*>', ' ', match.group(1)).strip()
                         matched[kuerzel]["sprechzeit"] = _re.sub(r'\s+', ' ', text)
+                    
+                    # 2. Suche nach Raum/Büro
+                    room_pattern = r'(?:Raum|Büro)\s*:\s*(?:<br\s*/?>\s*)?(.*?)\s*(?:</p>|<strong>|<li>)'
+                    rmatch = _re.search(room_pattern, r.text, _re.DOTALL | _re.IGNORECASE)
+                    if rmatch:
+                        room_text = _re.sub(r'<[^>]*>', ' ', rmatch.group(1)).strip()
+                        matched[kuerzel]["room"] = _re.sub(r'\s+', ' ', room_text)
             except Exception: pass
 
         for i in range(0, len(to_scrape), 20):
             await asyncio.gather(*[_fetch_sprechzeit(k, u) for k, u in to_scrape[i:i + 20]])
+            if (i // 20) % 5 == 0:
+                log.info("Dozenten-Index: Sprechzeiten scrapen: %d/%d abgeschlossen", min(i + 20, len(to_scrape)), len(to_scrape))
             await asyncio.sleep(0.5) # Kurze Pause zwischen Batches
 
     # 4. Bestehende manuelle Einträge erhalten
@@ -347,6 +379,7 @@ def _parse_timetable_text(text: str, filter_date: str | None = None) -> list[dic
 
 _token: str | None = None
 _token_expires: float = 0.0
+_token_lock = asyncio.Lock()
 
 
 def _jwt_expiry(token: str) -> float:
@@ -363,24 +396,26 @@ def _jwt_expiry(token: str) -> float:
 
 async def _get_token() -> str:
     global _token, _token_expires
-    if _token and time.monotonic() < _token_expires - 30:
-        return _token
-    async with httpx.AsyncClient(base_url=settings.raumzeit_base_url) as c:
-        r = await c.post(
-            "/private/api/v1/authentication",
-            json={"login": settings.raumzeit_login, "password": settings.raumzeit_password},
-        )
-        r.raise_for_status()
-        _token = r.json()["accessToken"]
-        _token_expires = _jwt_expiry(_token)
-        log.debug("Neues JWT geholt, läuft ab in %.0fs", _token_expires - time.monotonic())
-        return _token
+    async with _token_lock:
+        if _token and time.monotonic() < _token_expires - 30:
+            return _token
+        async with httpx.AsyncClient(base_url=settings.raumzeit_base_url) as c:
+            r = await c.post(
+                "/private/api/v1/authentication",
+                json={"login": settings.raumzeit_login, "password": settings.raumzeit_password},
+            )
+            r.raise_for_status()
+            _token = r.json()["accessToken"]
+            _token_expires = _jwt_expiry(_token)
+            log.debug("Neues JWT geholt, läuft ab in %.0fs", _token_expires - time.monotonic())
+            return _token
 
 
 def _client(token: str) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         base_url=settings.raumzeit_base_url,
         headers={"Authorization": f"Bearer {token}"},
+        timeout=30.0,
     )
 
 
@@ -605,6 +640,7 @@ def _parse_ical(text: str, filter_date: str | None = None,
 
     return [{
         "name": e.get("name", ""),
+        "module": e.get("name", ""),  # Bei iCal (Dozenten/Raum) ist Name oft das Modul
         "start": e.get("start", ""),
         "end": e.get("end", ""),
         "room": e.get("room", ""),
@@ -735,22 +771,29 @@ async def build_course_index() -> int:
     abbreviations = [c["name"] for c in courses if c.get("name")]
     log.info("Kurs-Index: %d Studiengänge gefunden", len(abbreviations))
 
-    # Phase 1: Für alle Kürzel alle Semester 1–10 parallel prüfen
+    # Phase 1: Für alle Kürzel alle Semester 1–10 parallel prüfen (in Batches)
     sem_tasks = [
-        (abbr, sem, _probe_course_key(f"{abbr}.{sem}"))
+        (abbr, sem, f"{abbr}.{sem}")
         for abbr in abbreviations
         for sem in range(1, 11)
     ]
-    sem_results = await asyncio.gather(*[t for _, _, t in sem_tasks])
+    sem_results = []
+    log.info("Kurs-Index: Prüfe Basis-Semester (Phase 1/2)...")
+    for i in range(0, len(sem_tasks), 40):
+        batch = sem_tasks[i:i + 40]
+        results = await asyncio.gather(*[_probe_course_key(key) for _, _, key in batch])
+        sem_results.extend(results)
+        if (i // 40) % 4 == 0:
+            log.info("Kurs-Index: Phase 1 Fortschritt: %d/%d Kombinationen geprüft", min(i + 40, len(sem_tasks)), len(sem_tasks))
 
     valid_base: list[tuple[str, int]] = []  # (abbreviation, semester)
     for (abbr, sem, _), ok in zip(sem_tasks, sem_results):
         if ok:
             valid_base.append((abbr, sem))
 
-    log.info("Kurs-Index: %d gültige Semester-Kombinationen", len(valid_base))
+    log.info("Kurs-Index: %d gültige Semester-Kombinationen gefunden", len(valid_base))
 
-    # Phase 2: Für alle gültigen Semester Gruppen prüfen.
+    # Phase 2: Für alle gültigen Semester Gruppen prüfen (in Batches)
     # Bekannte Einzelbuchstaben aus API-Analyse über alle Fakultäten: A,B,C,D,F,K,P,S,U,Z,E
     # + mehrstellige Kürzel die in der Praxis vorkommen
     _single = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -758,11 +801,18 @@ async def build_course_index() -> int:
     group_suffixes = _single + _multi
 
     grp_tasks = [
-        (abbr, sem, suffix, _probe_course_key(f"{abbr}.{sem}.{suffix}"))
+        (abbr, sem, suffix, f"{abbr}.{sem}.{suffix}")
         for abbr, sem in valid_base
         for suffix in group_suffixes
     ]
-    grp_results = await asyncio.gather(*[t for _, _, _, t in grp_tasks])
+    grp_results = []
+    log.info("Kurs-Index: Prüfe Gruppen-Kombinationen (Phase 2/2)...")
+    for i in range(0, len(grp_tasks), 40):
+        batch = grp_tasks[i:i + 40]
+        results = await asyncio.gather(*[_probe_course_key(key) for _, _, _, key in batch])
+        grp_results.extend(results)
+        if (i // 40) % 10 == 0:
+            log.info("Kurs-Index: Phase 2 Fortschritt: %d/%d Kombinationen geprüft", min(i + 40, len(grp_tasks)), len(grp_tasks))
 
     # Ergebnisse sammeln
     entries: list[dict] = []
@@ -781,18 +831,33 @@ async def build_course_index() -> int:
 
 async def fetch_course_brute_force(course_semester: str, date: str | None = None) -> dict:
     """
-    Ignoriert den Index – probt alle bekannten Suffixe direkt für diesen Kurs.
+    Prüft zuerst den Index, falls leer: probt alle bekannten Suffixe direkt für diesen Kurs.
     Aktualisiert den Index mit neu entdeckten Varianten.
     """
     parts = course_semester.split(".")
     abbr, sem = parts[0], parts[1]
     base_key = f"{abbr}.{sem}"
-    all_suffixes = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ") + [
-        "DF", "AB", "AF", "BF", "KP", "KU", "PU", "U1", "U2", "U61", "U62", "U63"
-    ]
-    probe_results = await asyncio.gather(*[_probe_course_key(f"{base_key}.{s}") for s in all_suffixes])
-    valid_variants = [base_key] + [f"{base_key}.{s}" for s, ok in zip(all_suffixes, probe_results) if ok]
+    
+    # 1. Zuerst in der DB schauen
+    valid_variants = await db.get_course_variants(abbr, int(sem))
+    
+    # 2. Falls nichts in der DB, Brute-Force
+    if not valid_variants:
+        log.info("Brute-Force %s: Keinen Index gefunden, starte Probing...", base_key)
+        all_suffixes = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ") + [
+            "DF", "AB", "AF", "BF", "KP", "KU", "PU", "U1", "U2", "U61", "U62", "U63"
+        ]
+        probe_results = await asyncio.gather(*[_probe_course_key(f"{base_key}.{s}") for s in all_suffixes])
+        valid_variants = [base_key] + [f"{base_key}.{s}" for s, ok in zip(all_suffixes, probe_results) if ok]
+        
+        # Index mit neu entdeckten Varianten aktualisieren
+        entries = [{"full_key": base_key, "abbreviation": abbr, "semester": int(sem), "group_letter": ""}]
+        for s, ok in zip(all_suffixes, probe_results):
+            if ok:
+                entries.append({"full_key": f"{base_key}.{s}", "abbreviation": abbr, "semester": int(sem), "group_letter": s})
+        await db.save_course_index(entries)
 
+    # 3. Daten abrufen
     if date:
         fetch_kwargs = {"date": date}
     else:
@@ -806,16 +871,14 @@ async def fetch_course_brute_force(course_semester: str, date: str | None = None
             b["gruppe"] = key
         all_bookings.extend(bookings)
 
-    # Index mit neu entdeckten Varianten aktualisieren
-    entries = [{"full_key": base_key, "abbreviation": abbr, "semester": int(sem), "group_letter": ""}]
-    for s, ok in zip(all_suffixes, probe_results):
-        if ok:
-            entries.append({"full_key": f"{base_key}.{s}", "abbreviation": abbr, "semester": int(sem), "group_letter": s})
-    await db.save_course_index(entries)
-    log.info("Brute-Force %s: %d Varianten, %d Einträge", base_key, len(valid_variants), len(all_bookings))
-
     label = date or f"KW {_date.today().isocalendar()[1]}"
-    return {"course_semester": course_semester, "queried_date": label, "bookings": all_bookings}
+    log.info("Abruf %s: %d Varianten, %d Einträge", base_key, len(valid_variants), len(all_bookings))
+    return {
+        "course_semester": course_semester, 
+        "queried_date": label, 
+        "bookings": all_bookings,
+        "all_groups": [v.split(".")[-1] if "." in v[len(base_key):] else "" for v in valid_variants]
+    }
 
 
 _probe_sem = asyncio.Semaphore(20)
@@ -826,11 +889,12 @@ async def _probe_course_key(key: str) -> bool:
     async with _probe_sem:
         try:
             token = await _get_token()
-            async with _client(token) as c:
-                r = await c.get(
-                    f"/api/v1/timetables/coursesemester/{key}",
-                    headers={"Accept": "text/calendar"},
-                )
+            async with httpx.AsyncClient(
+                base_url=settings.raumzeit_base_url,
+                headers={"Authorization": f"Bearer {token}", "Accept": "text/calendar"},
+                timeout=10.0,
+            ) as c:
+                r = await c.get(f"/api/v1/timetables/coursesemester/{key}")
             return r.status_code == 200
         except Exception:
             return False
@@ -849,12 +913,15 @@ async def resolve_course_name(query: str) -> tuple[str, str | None]:
         if _norm(c["name"]) == q:
             return c["name"], c["name"]
             
-    # Teil-Match auf Name
-    for c in courses:
-        # Manche Kurse haben 'shortName' oder 'description'?
-        # In der HKA API ist 'name' oft das Kürzel (z.B. MABB)
-        # Wir bräuchten eigentlich eine Liste der Klarnamen.
-        pass
+    # 2. Teil-Match auf 'longName' (Klarname)
+    # Wir sortieren Bachelor-Studiengänge (B) nach vorne, damit diese bevorzugt werden.
+    # Heuristik: " (B)" kommt vor " (M)"
+    courses_by_pref = sorted(courses, key=lambda x: (0 if "(B)" in x.get("longName", "") else 1))
+    for c in courses_by_pref:
+        long_name = c.get("longName", "")
+        if long_name and q in _norm(long_name):
+            # Gib den Langnamen zurück (für UI) + das Kürzel (für API)
+            return long_name, c["name"]
         
     # Wenn q wie ein Kürzel aussieht (4 Großbuchstaben), gib es zurück
     if re.fullmatch(r"[A-Z]{3,6}", query.upper()):

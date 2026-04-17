@@ -8,8 +8,6 @@ import logging
 import sys
 import os
 import json
-import litellm
-import traceback
 from datetime import datetime, timedelta, time as _time
 from logging.handlers import RotatingFileHandler
 
@@ -190,7 +188,6 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     remaining = (limit - recent) if limit > 0 else "∞"
     
     course_raw = u.get("primary_course") if u else None
-    import json
     try:
         courses = json.loads(course_raw) if course_raw else []
         if not isinstance(courses, list): courses = [str(courses)]
@@ -417,9 +414,48 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         log.exception("Agent-Fehler"); await update.message.reply_text(f"⚠️ Fehler: {exc}")
 
 async def _send_reply(update, chat_id: int, reply: str) -> None:
-    try: msg = await update.message.reply_text(reply, parse_mode="Markdown")
-    except: msg = await update.message.reply_text(reply)
-    _bot_messages.setdefault(chat_id, []).append(msg.message_id)
+    # Telegram Limit ist 4096 Zeichen. Wir nutzen 4000 zur Sicherheit.
+    MAX_LEN = 4000
+    
+    if len(reply) <= MAX_LEN:
+        try:
+            msg = await update.message.reply_text(reply, parse_mode="Markdown")
+        except Exception:
+            msg = await update.message.reply_text(reply)
+        _bot_messages.setdefault(chat_id, []).append(msg.message_id)
+        return
+
+    # Nachricht splitten
+    chunks = []
+    current_chunk = []
+    current_len = 0
+    
+    for line in reply.splitlines(keepends=True):
+        if current_len + len(line) > MAX_LEN:
+            if current_chunk:
+                chunks.append("".join(current_chunk))
+                current_chunk = []
+                current_len = 0
+            
+            # Falls eine einzelne Zeile bereits zu lang ist
+            if len(line) > MAX_LEN:
+                for i in range(0, len(line), MAX_LEN):
+                    chunks.append(line[i:i+MAX_LEN])
+                continue
+        
+        current_chunk.append(line)
+        current_len += len(line)
+        
+    if current_chunk:
+        chunks.append("".join(current_chunk))
+
+    for i, chunk in enumerate(chunks):
+        suffix = f" ({i+1}/{len(chunks)})" if len(chunks) > 1 else ""
+        try:
+            msg = await update.message.reply_text(chunk + suffix, parse_mode="Markdown")
+        except Exception:
+            msg = await update.message.reply_text(chunk + suffix)
+        _bot_messages.setdefault(chat_id, []).append(msg.message_id)
 
 async def _run_index_build():
     try: n = await raumzeit.build_course_index(); log.info("Kurs-Index: %d Einträge", n)
