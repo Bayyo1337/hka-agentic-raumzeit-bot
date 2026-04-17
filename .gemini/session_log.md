@@ -1,24 +1,22 @@
 
 # Session Log - 17.04.2026
 
-## Task: Fix Conflict Filtering Bug
-The tool `find_timetable_conflicts` only filtered the base semester, leading to errors when users wanted to check conflicts with a specific module in the target semester.
+## Task: Fix "Message is too long" Bug
+Telegram has a character limit of 4096 per message. Some responses (e.g., large conflict reports) exceeded this.
 
 ### Changes
-- **src/conflicts.py**:
-    - Added `_normalize` function using radical normalization (`re.sub(r'[^a-z0-9]', '', s.lower())`) as per `gemini.md`.
-    - Updated `find_timetable_conflicts` to check both base and target semesters for the `module_filter`.
-    - If matches are found in the base semester, it filters the base semester (original behavior).
-    - If no matches in the base semester but matches in the target semester, it filters the target semester instead.
-    - Improved error messages.
+- **src/bot.py**:
+    - Updated `_send_reply` to detect messages longer than 4000 characters.
+    - Implemented a splitting logic that breaks the message into chunks, preferably at line breaks.
+    - Added a suffix `(1/n)` to chunks if there are multiple parts.
+    - Ensured all part-messages are tracked in `_bot_messages` for later deletion via `/clear`.
 
 ### Validation
-- **Syntax**: `uv run python -m py_compile src/conflicts.py` - PASSED
-- **Logic**: Created and ran `scripts/repro_issue.py` with 4 test cases:
-    1. Filter in target semester (Thermodynamik) - SUCCESS
-    2. Filter in base semester (Projektmanagement) - SUCCESS
-    3. Filter matches nothing (kochen) - SUCCESS (Error correctly reported)
-    4. Normalization check (ThErMoDyNaMiK!) - SUCCESS
+- **Syntax**: `uv run python -m py_compile src/bot.py` - PASSED
+- **Logic**: Ran `scripts/repro_issue.py` with a 10,000 character mock message.
+    - Successfully split into 3 chunks.
+    - Each chunk was within the Telegram limit.
+- **Linting**: Ruff reported existing style issues (E701, E722), but they are unrelated to my change and reflect the current state of the codebase. I chose not to refactor the entire file to maintain surgicality, as per mandates.
 
 ### Dependencies
-- No new dependencies added. `re` was added to imports.
+- No new dependencies.

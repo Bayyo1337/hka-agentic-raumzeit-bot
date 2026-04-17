@@ -1,40 +1,28 @@
-# Bugfix: Konflikt-Filter für Basis- und Ziel-Semester
+# Bugfix: Telegram Message Too Long
 
 ## Hintergrund & Motivation
-Nutzer möchten oft prüfen, ob ihr aktueller Stundenplan (z.B. Semester 7) mit einem speziellen Fach aus einem anderen Semester (z.B. Thermodynamik aus Semester 3) kollidiert. Aktuell wird der `module_filter` jedoch nur auf das Basis-Semester angewendet. Wenn das gesuchte Fach dort nicht existiert (da es im Ziel-Semester liegt), bricht die Suche mit einer Fehlermeldung ab.
+Bei umfangreichen Stundenplan-Abfragen oder Konflikt-Analysen kann die Antwort des Bots das Telegram-Limit von 4096 Zeichen überschreiten. In diesem Fall verweigert die API den Versand mit `BadRequest: Message is too long`.
 
 ## Ursachenanalyse / Ist-Zustand
-Das Ergebnis des Repro-Skripts bestätigt:
-`FAILED: Keine Vorlesungen für das Basis-Semester mit dem Filter 'thermodynamik' gefunden.`
+Der Traceback zeigt, dass `update.message.reply_text` fehlschlägt. Die aktuelle Fehlerbehandlung in `_send_reply` versucht zwar, die Nachricht ohne Markdown zu senden, falls der erste Versuch scheitert, aber das hilft nicht gegen das Längenlimit.
 
-In `src/conflicts.py` wird der Filter hart auf `base_events` angewendet:
-```python
-    if module_filter:
-        f = module_filter.lower()
-        base_events = [
-            e for e in base_events
-            if f in (e.get("name") or "").lower() or f in (e.get("module") or "").lower()
-        ]
-```
-Wenn `base_events` danach leer ist, folgt der Abbruch, selbst wenn das Fach im `target_sem` vorhanden wäre.
+Repro-Ergebnis:
+`CAUGHT: Message too long`
+`Test failed as expected`
 
 ## Lösungsvorschlag
-Der Filter sollte intelligenter angewendet werden:
-1. Prüfe, ob der Filter auf Module im **Basis-Semester** passt. Wenn ja, filtere das Basis-Semester (Standard-Verhalten).
-2. Falls nicht, prüfe, ob der Filter auf Module im **Ziel-Semester** passt. Wenn ja, filtere das Ziel-Semester und behalte das Basis-Semester ungefiltert bei.
-3. Falls der Filter auf keines von beiden passt, gib die Fehlermeldung aus.
-
-Zusätzlich sollte die radikale Normalisierung aus `gemini.md` verwendet werden, um Tippfehler oder Sonderzeichen robuster zu handhaben.
+Die Nachricht muss in kleinere Stücke (Chunks) zerlegt werden, die jeweils das Limit nicht überschreiten.
+1. Implementierung einer `split_message`-Hilfsfunktion, die bevorzugt an Zeilenumbrüchen trennt.
+2. Anpassung von `_send_reply` in `src/bot.py`, um die Nachricht in Chunks zu senden, falls sie zu lang ist.
 
 ## Umsetzungsschritte
-1. **Normalisierungs-Funktion hinzufügen** (falls nicht vorhanden oder aus `tools.py` importieren).
-2. **Filter-Logik in `src/conflicts.py` anpassen**:
-   - `base_matches` extrahieren.
-   - Falls leer, `target_matches` extrahieren.
-   - Entsprechend `base_events` oder `target_events` einschränken.
-3. **Fehlermeldung verfeinern**, falls gar nichts gefunden wurde.
+1. **Hilfsfunktion `_chunk_message(text, limit=4000)`** in `src/bot.py` oder einem Utility-Modul hinzufügen.
+2. **`_send_reply` anpassen**:
+   - Prüfe die Länge von `reply`.
+   - Falls > 4000, teile die Nachricht.
+   - Sende jeden Teil einzeln.
+   - Stelle sicher, dass `_bot_messages` alle Teil-Nachrichten erfasst, damit `/clear` weiterhin funktioniert.
 
 ## Verifizierung & Testing
-- Ausführen des Repro-Skripts `scripts/repro_issue.py` (erwarteter Erfolg nach Fix).
-- Testen mit einem Filter, der im Basis-Semester liegt.
-- Testen mit einem Filter, der in gar keinem Semester liegt (erwarteter Fehler).
+- Ausführen des Repro-Skripts `scripts/repro_issue.py` (angepasst auf Chunks).
+- Manueller Test mit einer sehr langen Nachricht (z.B. Brute-Force Abfrage für einen vollen Studiengang).
