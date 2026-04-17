@@ -1,5 +1,32 @@
 # 📝 Changelog: HKA Raumzeit KI-Agent
 
+## [17.04.2026] - Performance & Bot-Stabilität
+### Added
+- **Admin**: Implementierung eines nicht-blockierenden Hintergrund-Syncs für Telegram (`/sync`), um Timeouts zu vermeiden.
+- **Tools**: Fortschritts-Logging während des Synchronisationsprozesses hinzugefügt.
+- **Architektur**: Migration interner Agenten-Daten nach `.gemini/` und Dokumentation abgeschlossener Aufgaben in `issues/done/`.
+
+### Fixed
+- **Bot**: Automatische Aufteilung langer Nachrichten in Chunks (Chunking), um den Telegram `BadRequest: message is too long` Fehler bei umfangreichen Plänen zu beheben.
+- **Konflikt-Analyse (`/setcourse`)**:
+  - Filterung nun sowohl im Basis- als auch im Ziel-Semester möglich.
+  - Radikale Normalisierung für robustere Vergleiche bei Kursnamen.
+  - Ausblendung von Gruppennamen, wenn alle Gruppen eines Moduls betroffen sind (verbesserte Übersicht).
+  - Deduplizierung und verbesserte Filterung der Ergebnisausgabe.
+  - Fix für die Race-Condition beim Token-Abruf ("Keine Vorlesungen gefunden") durch Implementierung eines Auth-Locks.
+- **Stundenpläne**:
+  - Dozenten-Stundenpläne werden nun strikt chronologisch sortiert.
+  - Deduplizierung von Modul-Einträgen in der Dozenten-Ansicht.
+- **Tools**:
+  - Performance-Optimierung des Personen-Sync-Regex zur Vermeidung von Backtracking.
+  - Intelligentere Kursnamen-Erkennung (Bachelor-Präferenz, LongName Matching).
+  - Zuverlässigeres Scraping von Büros und Kontaktdaten im Dozenten-Index.
+
+### Changed
+- Bereinigung von temporären Feedback-Dateien und Aktualisierung des internen Session-Logs.
+
+---
+
 ## [16.04.2026] - Stabilität & Dozenten-Infos
 ### Fixed
 - **Mensa-Integration**: Kompletter Rewrite des Scrapers für `api.mensa-ka.de`.
