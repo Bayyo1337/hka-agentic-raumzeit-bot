@@ -1,0 +1,1 @@
+wenn in telegram fehlermeldungen angezeigt werden, soll die möglichkeit (wenn der fehler bei einem admin auftritt) bestehen, dies direkt als active issue aufzuschreiben. Dabei soll der log der kompletten anfrage in issues/active als .md abgelegt werden. Der Name des Dokuments soll der fehler sein aber kurz und prägnant.
