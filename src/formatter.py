@@ -286,20 +286,20 @@ def _fmt_lecturer(result: dict) -> str:
     queried_date = result.get("queried_date", "")
     email = result.get("email")
     sprechzeit = result.get("sprechzeit")
+    room = result.get("room")
 
     date_label = _fmt_date(queried_date) if queried_date and queried_date != "heute" else queried_date
     header = f"👤 *Stundenplan {lecturer}*" + (f" – {date_label}" if date_label else "")
-    
-    lines = [header]
-    if email or sprechzeit:
+
+    if not bookings:
+        lines = [header]
         if email:
             lines.append(f"📧 {email}")
         if sprechzeit:
             lines.append(f"🕒 *Sprechzeit:* {sprechzeit}")
-        lines.append("")
-
-    if not bookings:
-        lines.append("Keine Einträge für heute gefunden. An welchem Tag suchst du?")
+        if room:
+            lines.append(f"🏫 *Büro:* {room}")
+        lines.append("\nKeine Einträge für heute gefunden. An welchem Tag suchst du?")
         return "\n".join(lines)
 
     from collections import defaultdict
@@ -319,11 +319,13 @@ def _fmt_lecturer(result: dict) -> str:
     sorted_days = sorted(by_day.keys(), key=lambda d: _day_order.get(d, 99))
 
     all_lines = []
-    if email or sprechzeit:
+    if email or sprechzeit or room:
         if email:
             all_lines.append(f"📧 {email}")
         if sprechzeit:
             all_lines.append(f"🕒 *Sprechzeit:* {sprechzeit}")
+        if room:
+            all_lines.append(f"🏫 *Büro:* {room}")
         all_lines.append("")
 
     total_days = len(sorted_days)
