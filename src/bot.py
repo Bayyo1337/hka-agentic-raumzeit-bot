@@ -90,6 +90,7 @@ _JA   = {"ja", "j", "yes", "y", "stimmt", "korrekt", "ok", "okay"}
 _USER_COMMANDS = [
     BotCommand("start", "Einführung & Kurzhilfe"),
     BotCommand("help", "Ausführliche Hilfe & Beispiele"),
+    BotCommand("myplan", "Dein persönlicher Stundenplan"),
     BotCommand("setcourse", "Eigener Studiengang hinterlegen"),
     BotCommand("stats", "Nutzungsstatistik & Profil"),
     BotCommand("reset", "Gesprächsverlauf löschen"),
@@ -328,6 +329,59 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(f"✅ Issue erstellt: `issues/active/{filename}`", parse_mode="Markdown")
         # Aus Cache entfernen um Speicher zu sparen
         _error_cache.pop(err_id, None)
+
+
+async def cmd_myplan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Zeigt den personalisierten Wochenstundenplan."""
+    from src.state import _personal_features
+    if not _personal_features[0]:
+        await update.message.reply_text("💡 Dieses Feature ist aktuell deaktiviert.")
+        return
+        
+    user_id = update.effective_user.id
+    u = await db.get_user(user_id)
+    raw = u.get("primary_course") if u else None
+    
+    try:
+        courses = json.loads(raw) if raw else []
+        if not isinstance(courses, list): courses = [str(raw)]
+    except:
+        courses = [raw] if raw else []
+        
+    if not courses or not courses[0]:
+        await update.message.reply_text("🎓 Du hast noch keine Kurse hinterlegt. Nutze /setcourse um dies zu tun.")
+        return
+
+    # Check Cache
+    cached = await db.get_user_plan_cache(user_id)
+    if cached:
+        day_msgs = formatter.format_weekly_plan(cached.get("bookings", []))
+        for msg in day_msgs:
+            try:
+                await update.message.reply_text(msg, parse_mode="Markdown")
+            except:
+                await update.message.reply_text(msg)
+        return
+
+    # No Cache -> Fetch from API
+    msg = await update.message.reply_text("🔄 Rufe deinen Stundenplan ab...")
+    all_bookings = []
+    for course in courses:
+        res = await raumzeit.get_course_timetable(course)
+        if "bookings" in res:
+            all_bookings.extend(res["bookings"])
+    
+    # Save to Cache
+    await db.save_user_plan_cache(user_id, {"bookings": all_bookings})
+    
+    # Format and Send
+    day_msgs = formatter.format_weekly_plan(all_bookings)
+    await msg.delete()
+    for m in day_msgs:
+        try:
+            await update.message.reply_text(m, parse_mode="Markdown")
+        except:
+            await update.message.reply_text(m)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -573,6 +627,7 @@ async def main_async() -> None:
     app.add_handler(CommandHandler("setcourse", cmd_setcourse))
     app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("myplan", cmd_myplan))
     app.add_handler(CommandHandler("admin", admin.cmd_admin))
     app.add_handler(CommandHandler("rooms", admin.cmd_rooms))
     app.add_handler(CommandHandler("sync", admin.cmd_sync))
@@ -618,3 +673,4 @@ def main():
     except (KeyboardInterrupt, SystemExit): pass
 
 if __name__ == "__main__": main()
+

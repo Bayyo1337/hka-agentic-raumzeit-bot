@@ -461,3 +461,17 @@ def save_issue_from_log(data: dict) -> str:
         f.write(content)
         
     return filename
+
+@_require_admin
+async def cmd_togglepersonal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from src.state import _personal_features
+    _personal_features[0] = not _personal_features[0]
+    status = "AKTIVIERT" if _personal_features[0] else "DEAKTIVIERT"
+    await update.message.reply_text(f"✨ Persönliche Stundenpläne wurden {status}.")
+
+@_require_admin
+async def cmd_togglemap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from src.state import _map_feature
+    _map_feature[0] = not _map_feature[0]
+    status = "AKTIVIERT" if _map_feature[0] else "DEAKTIVIERT"
+    await update.message.reply_text(f"📍 Lageplan-Anzeige wurde {status}.")
