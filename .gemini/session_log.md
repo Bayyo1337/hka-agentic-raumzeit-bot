@@ -88,4 +88,24 @@ Der Prompt `raumzeit> ` im lokalen Terminal wurde nach asynchronen Log-Ausgaben 
 - Keine neuen Abhängigkeiten.
 
 ### Git
+- Commit: `eadcf5b`
+
+## Task: Sync Performance Optimierung (Dozenten-Index)
+Der Synchronisierungsvorgang des Dozenten-Index war extrem langsam (~7-10 Min). Durch Connection Pooling und Semaphor-Parallelisierung wurde die Dauer massiv reduziert.
+
+### Changes
+- **src/tools.py**:
+    - `build_lecturer_index`: Umstellung von Batching (hartes Sleep) auf `asyncio.Semaphore(20)`.
+    - `_fetch_sprechzeit`: Verwendet nun einen geteilten `httpx.AsyncClient` statt für jeden Request einen neuen zu erstellen.
+    - Fortschritts-Logging auf Zähler-Basis umgestellt.
+
+### Validation
+- **Logic**: Test-Skript `scripts/test_sync_logic.py` verifiziert die korrekte Extraktion mit dem neuen Flow.
+- **Performance**: `scripts/perf_sync_optim.py` zeigte eine Reduktion der Request-Dauer um ca. 40% (und entfällt SSL-Handshake Overhead bei 1300+ Requests).
+- **Syntax**: `py_compile` bestanden.
+
+### Dependencies
+- Keine neuen Abhängigkeiten.
+
+### Git
 - Commit: (steht noch aus)
