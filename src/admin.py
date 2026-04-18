@@ -398,18 +398,33 @@ async def cmd_togglemap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 @_require_admin
 async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    msg = await update.message.reply_text("⏳ Sync im Hintergrund gestartet. Du kannst den Bot derweil normal weiter nutzen. (Siehe Terminal für Details)")
+    mode = context.args[0].lower() if context.args else "all"
+    
+    if mode not in ("all", "courses", "lecturers"):
+        await update.message.reply_text("❌ Ungültiger Modus. Verwendung: /sync [all|courses|lecturers]")
+        return
+
+    label = {
+        "all": "vollständiger Sync (Kurse & Dozenten)",
+        "courses": "Kurs-Index Sync",
+        "lecturers": "Dozenten-Index Sync"
+    }[mode]
+
+    msg = await update.message.reply_text(f"⏳ {label} im Hintergrund gestartet. Du kannst den Bot derweil normal weiter nutzen.")
     
     async def _bg_sync():
         try:
-            # Wir führen die Builds hier asynchron aus (Log-Ausgaben landen im Terminal)
-            count = await raumzeit.build_course_index()
-            lecturer_count = await raumzeit.build_lecturer_index()
-            await msg.edit_text(
-                f"✅ Kurs-Index: {count} Einträge\n"
-                f"✅ Dozenten-Index: {lecturer_count} gematcht\n"
-                "✅ Sync abgeschlossen!"
-            )
+            results = []
+            if mode in ("all", "courses"):
+                count = await raumzeit.build_course_index()
+                results.append(f"✅ Kurs-Index: {count} Einträge")
+            
+            if mode in ("all", "lecturers"):
+                lecturer_count = await raumzeit.build_lecturer_index()
+                results.append(f"✅ Dozenten-Index: {lecturer_count} gematcht")
+            
+            results.append("✅ Sync abgeschlossen!")
+            await msg.edit_text("\n".join(results))
         except Exception as exc:
             log.exception("Index-Aufbau im Hintergrund fehlgeschlagen")
             await msg.edit_text(f"⚠️ Fehler beim Sync: {exc}")
