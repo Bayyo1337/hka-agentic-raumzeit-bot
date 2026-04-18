@@ -71,4 +71,21 @@ Der `/sync` Befehl wurde um Parameter erweitert, um gezielt nur Kurs- oder Dozen
 - **Syntax**: `py_compile` bestanden.
 
 ### Git
+- Commit: `246f2cb`
+
+## Task: Fehlender/Überschriebener Konsolen-Prompt behoben (console-entry)
+Der Prompt `raumzeit> ` im lokalen Terminal wurde nach asynchronen Log-Ausgaben nicht neu gezeichnet, sodass es so aussah, als wäre das System eingefroren.
+
+### Changes
+- **src/bot.py**:
+    - `handle_message`: Logik am Ende hinzugefügt, um bei asynchronen Operationen im interaktiven Modus (`not IS_DAEMON`) den Prompt mit `sys.stdout.write("\rraumzeit> ")` manuell neu zu zeichnen.
+
+### Validation
+- **Syntax/Linting**: `uv run python -m py_compile src/bot.py` bestanden (die angezeigten Ruff-Fehler existierten bereits zuvor und wurden nicht durch diesen Patch verursacht).
+- **Logic**: Im interaktiven Modus wird nach dem Telegram-Handle und dem Logging der Tokens nun der Prompt neu generiert.
+
+### Dependencies
+- Keine neuen Abhängigkeiten.
+
+### Git
 - Commit: (steht noch aus)
