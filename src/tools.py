@@ -224,7 +224,9 @@ async def build_lecturer_index() -> int:
                     rmatch = _re.search(room_pattern, r.text, _re.DOTALL | _re.IGNORECASE)
                     if rmatch:
                         room_text = _re.sub(r'<[^>]*>', ' ', rmatch.group(1)).strip()
-                        matched[kuerzel]["room"] = _re.sub(r'\s+', ' ', room_text)
+                        # Plausibilitätscheck: Raumnummern sind meist kurz und enthalten keine Uhrzeiten
+                        if 1 < len(room_text) < 30 and " Uhr" not in room_text and "Termin" not in room_text:
+                            matched[kuerzel]["room"] = _re.sub(r'\s+', ' ', room_text)
             except Exception: pass
 
         for i in range(0, len(to_scrape), 20):
@@ -725,6 +727,7 @@ async def get_lecturer_timetable(account: str, date: str | None = None) -> dict:
         "lecturer": full_name or kuerzel,
         "email": info.get("email"),
         "sprechzeit": info.get("sprechzeit"),
+        "room": info.get("room"),
         "bookings": bookings,
         "queried_date": date or "heute"
     }
@@ -740,7 +743,8 @@ async def get_lecturer_info(account: str) -> dict:
     return {
         "name": full_name,
         "email": info.get("email"),
-        "sprechzeit": info.get("sprechzeit")
+        "sprechzeit": info.get("sprechzeit"),
+        "room": info.get("room")
     }
 
 

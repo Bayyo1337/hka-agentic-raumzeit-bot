@@ -1,33 +1,34 @@
-# Sync-Performance Fix für h-ka.de Dozenten-Index
+# Issue: Raumnummern werden nicht ausgegeben und fehlerhaft gescraped
 
 ## Hintergrund & Motivation
-Die Synchronisierung des Dozenten-Index von `h-ka.de` ist extrem langsam (ca. 10 Minuten pro Seite) oder hängt komplett. Dies liegt an einem ineffizienten Regulären Ausdruck (`tr_pattern`) in `src/tools.py`, der auf eine 300KB große HTML-Seite angewendet wird. Durch "Catastrophic Backtracking" bei fehlerhaften oder fehlenden Matches wird die CPU-Last maximiert und der Prozess blockiert.
+Nutzer haben gemeldet, dass Raumnummern (Büros) von Dozenten nicht angezeigt werden. Zudem zeigt eine Analyse des Dozenten-Index (`data/lecturers.json`), dass der Scraper oft Sprechzeiten oder andere Texte fälschlicherweise als "Raum" erfasst.
 
 ## Ursachenanalyse / Ist-Zustand
-Der aktuelle Regex in `src/tools.py`:
-```python
-tr_pattern = r'<tr[^>]*data-document-url="(.*?)"[^>]*>.*?<span class="person__user-academic-title">(.*?)</span>.*?<span class="person__user-name-title">(.*?)</span>.*?([\w.\-]+)<span[^>]*>spam prevention</span>@h-ka\.de'
-```
+Die Untersuchung hat zwei Hauptursachen ergeben:
 
-Probleme:
-1. **Fehlende Felder:** Das Feld `<span class="person__user-name-title">` scheint in der aktuellen HTML-Struktur von `h-ka.de` nicht mehr (oder nicht in jeder Zeile) vorhanden zu sein.
-2. **Backtracking:** Die Kombination aus mehreren `.*?` und `re.DOTALL` auf einem riesigen String führt dazu, dass der Regex-Engine bei einem Nicht-Match (z.B. wenn ein Span fehlt) versucht, alle möglichen Kombinationen bis zum Ende des Dokuments zu prüfen.
-3. **Struktur:** Die Seite enthält ca. 20 Personen pro Seite, aber der Regex wird auf den gesamten Content angewendet.
+1. **Fehlende Weitergabe in der API-Logik**: Die Funktionen `get_lecturer_timetable` und `get_lecturer_info` laden zwar die Dozenten-Infos aus dem Index, geben das Feld `room` aber nicht an den Aufrufer (und damit an den Formatter) weiter.
+   * *Ergebnis Repro-Skript*: `Raum im Ergebnis: MISSING` obwohl im Index vorhanden.
+
+2. **Ungenauer Scraper-Regex**: Der Regex in `build_lecturer_index` zur Extraktion von Räumen von den HKA-Profilseiten ist zu unscharf. Er fängt oft Texte ein, die zwar das Wort "Raum" enthalten, aber keine Raumnummern sind (z.B. "In Coronazeiten bitte Termin vorab...").
+   * *Beispiel*: `"room": "Mo bis Do, 09:00 bis 13:00 Uhr..."`
 
 ## Lösungsvorschlag
-Statt eines riesigen Regex auf dem gesamten Dokument wird ein zweistufiges Verfahren verwendet:
-1. **Splitting:** Das Dokument wird in einzelne `<tr>` Blöcke zerlegt. Da die Blöcke sauber mit `</tr>` enden, ist dies sicher und schnell.
-2. **Extraktion:** Auf jedem Block werden gezielte, einfache Regex-Suchen für die einzelnen Felder (URL, Titel/Name, Email) ausgeführt.
-3. **Robustheit:** Wenn ein Feld (z.B. Titel) fehlt, wird dies abgefangen, ohne den gesamten Prozess zu stoppen.
+
+1. **API-Logik anpassen**: In `src/tools.py` das Feld `room` in den Rückgabe-Dictionaries von `get_lecturer_timetable` und `get_lecturer_info` ergänzen.
+2. **Scraper verbessern**:
+   * Den Regex für Räume in `src/tools.py` verfeinern (z.B. durch Längenbegrenzung oder Ausschluss von typischen Sprechzeit-Keywords).
+   * Die radikale Normalisierung aus `gemini.md` ist hier primär für den Vergleich wichtig, für die Anzeige von Räumen sollte der Originaltext (geputzt) erhalten bleiben.
+3. **Formatter prüfen**: Sicherstellen, dass der Formatter das `room`-Feld bei Dozenten-Infos auch wirklich rendert (scheint laut Grep bereits der Fall zu sein).
 
 ## Umsetzungsschritte
-1. **`src/tools.py` anpassen:**
-    - Ersetzen der `re.findall(tr_pattern, ...)` Schleife durch eine Logik, die erst die Zeilen isoliert.
-    - Verwendung von spezifischen Patterns für `data-document-url`, `person__user-academic-title` und die Email.
-2. **Normalisierung:** Sicherstellen, dass die Namen weiterhin normalisiert werden (bestehende Logik beibehalten).
-3. **Validierung:** Ausführen des Repro-Skripts `scripts/repro_sync_hka.py` (angepasst an die neue Logik) zur Zeitmessung.
+
+1. **src/tools.py**:
+   * In `get_lecturer_timetable` das Feld `"room": info.get("room")` hinzufügen.
+   * In `get_lecturer_info` das Feld `"room": info.get("room")` hinzufügen.
+   * Den `room_pattern` Regex in `_fetch_sprechzeit` (innerhalb von `build_lecturer_index`) verbessern.
+2. **src/formatter.py**: Kurze Sichtprüfung, ob `room` in `_fmt_lecturer_info` oder ähnlichem genutzt wird.
 
 ## Verifizierung & Testing
-- `python3 scripts/repro_sync_hka.py` muss in unter 1 Sekunde für Seite 1 fertig sein.
-- `uv run python -m py_compile src/tools.py` zur Syntax-Prüfung.
-- Manueller Test des Sync-Befehls (falls möglich) oder Verifizierung der Log-Ausgaben.
+- Ausführen von `scripts/repro_room_scraping.py`.
+- Nach der Änderung sollte der Raum (sofern im Index vorhanden) korrekt ausgegeben werden.
+- (Optional) Manueller Sync-Lauf für einzelne Dozenten, um den verbesserten Scraper zu testen.
