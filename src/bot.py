@@ -131,6 +131,7 @@ def _command_help(is_admin: bool) -> str:
         "/reset – Löscht den aktuellen Gesprächskontext",
     ]
     if _personal_features[0]:
+        lines.insert(-2, "/myplan – Dein persönlicher Wochenstundenplan")
         lines.insert(-2, "/setcourse – Geführte Auswahl deines Studiengangs")
 
     if is_admin:
