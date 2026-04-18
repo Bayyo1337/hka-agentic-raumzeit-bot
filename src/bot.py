@@ -486,6 +486,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await _send_reply(update, chat_id, reply)
     except Exception as exc:
         log.exception("Agent-Fehler"); await update.message.reply_text(f"⚠️ Fehler: {exc}")
+        
+    if not IS_DAEMON:
+        # Den Prompt für den lokalen Konsolennutzer nach den Logs neu zeichnen
+        sys.stdout.write("\rraumzeit> ")
+        sys.stdout.flush()
 
 async def _send_reply(update, chat_id: int, reply: str) -> None:
     # Telegram Limit ist 4096 Zeichen. Wir nutzen 4000 zur Sicherheit.
