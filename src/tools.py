@@ -152,17 +152,17 @@ async def build_lecturer_index() -> int:
             tr_blocks = _re.findall(r'<tr[^>]*data-document-url=".*?".*?>.*?</tr>', r.text, _re.DOTALL)
             for block in tr_blocks:
                 m_url = _re.search(r'data-document-url="(.*?)"', block)
-                m_title = _re.search(r'class="person__user-academic-title">(.*?)</span>', block)
-                m_name = _re.search(r'class="person__user-name-title">(.*?)</span>', block)
+                # Die HKA-Seite scheint person__user-name-title nicht mehr zu nutzen, 
+                # alles steht jetzt in person__user-academic-title
+                m_name = _re.search(r'class="person__user-academic-title">(.*?)</span>', block)
                 m_mail = _re.search(r'([\w.\-]+)<span[^>]*>spam prevention</span>@h-ka\.de', block)
                 
                 if m_url and m_mail:
                     p_url = m_url.group(1)
-                    p_title = m_title.group(1) if m_title else ""
                     p_name = m_name.group(1) if m_name else ""
                     p_mail_user = m_mail.group(1)
                     
-                    full_name = _re.sub(r'\s+', ' ', f"{p_title} {p_name}").strip()
+                    full_name = _re.sub(r'\s+', ' ', p_name).strip()
                     persons.append({
                         "name": full_name,
                         "vorname": p_mail_user.split(".")[0],
@@ -220,13 +220,15 @@ async def build_lecturer_index() -> int:
                         matched[kuerzel]["sprechzeit"] = _re.sub(r'\s+', ' ', text)
                     
                     # 2. Suche nach Raum/Büro
-                    room_pattern = r'(?:Raum|Büro)\s*:\s*(?:<br\s*/?>\s*)?(.*?)\s*(?:</p>|<strong>|<li>)'
+                    # Robustheit: Doppelpunkt optional, stoppt beim nächsten HTML-Tag (<)
+                    room_pattern = r'(?:Raum|Büro)\s*:?\s*(?:<br\s*/?>\s*)?([^<]+)'
                     rmatch = _re.search(room_pattern, r.text, _re.DOTALL | _re.IGNORECASE)
                     if rmatch:
                         room_text = _re.sub(r'<[^>]*>', ' ', rmatch.group(1)).strip()
                         # Plausibilitätscheck: Raumnummern sind meist kurz und enthalten keine Uhrzeiten
                         if 1 < len(room_text) < 30 and " Uhr" not in room_text and "Termin" not in room_text:
                             matched[kuerzel]["room"] = _re.sub(r'\s+', ' ', room_text)
+
             except Exception: pass
 
         for i in range(0, len(to_scrape), 20):

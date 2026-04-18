@@ -1,34 +1,44 @@
-# Issue: Raumnummern werden nicht ausgegeben und fehlerhaft gescraped
+# Issue: Raumnummern auf HKA-Profilseiten werden nicht korrekt gescraped
 
 ## Hintergrund & Motivation
-Nutzer haben gemeldet, dass Raumnummern (Büros) von Dozenten nicht angezeigt werden. Zudem zeigt eine Analyse des Dozenten-Index (`data/lecturers.json`), dass der Scraper oft Sprechzeiten oder andere Texte fälschlicherweise als "Raum" erfasst.
+Nutzer berichten, dass Raumnummern (z.B. Peter Offermann, M-012) nicht im Bot angezeigt werden. Eine Analyse der HKA-Profilseiten hat ergeben, dass die HTML-Struktur von der aktuellen Scraping-Logik nicht abgedeckt wird.
 
 ## Ursachenanalyse / Ist-Zustand
-Die Untersuchung hat zwei Hauptursachen ergeben:
+Der aktuelle Regex in `src/tools.py`:
+```python
+room_pattern = r'(?:Raum|Büro)\s*:\s*(?:<br\s*/?>\s*)?(.*?)\s*(?:</p>|<strong>|<li>)'
+```
+Probleme:
+1. **Fehlender Doppelpunkt**: Die Webseite nutzt oft `Raum` (ohne Doppelpunkt) gefolgt von einem Zeilenumbruch.
+2. **Zeilenumbrüche/Whitespace**: Zwischen dem Wort "Raum" und der eigentlichen Nummer (z.B. "M-012") liegen oft mehrere Leerzeichen und Newlines.
+3. **Abschluss-Tag**: Die Raumnummer wird oft durch ein `<br/>` abgeschlossen, was im aktuellen Regex nur als optionaler *Start* vorgesehen war.
 
-1. **Fehlende Weitergabe in der API-Logik**: Die Funktionen `get_lecturer_timetable` und `get_lecturer_info` laden zwar die Dozenten-Infos aus dem Index, geben das Feld `room` aber nicht an den Aufrufer (und damit an den Formatter) weiter.
-   * *Ergebnis Repro-Skript*: `Raum im Ergebnis: MISSING` obwohl im Index vorhanden.
-
-2. **Ungenauer Scraper-Regex**: Der Regex in `build_lecturer_index` zur Extraktion von Räumen von den HKA-Profilseiten ist zu unscharf. Er fängt oft Texte ein, die zwar das Wort "Raum" enthalten, aber keine Raumnummern sind (z.B. "In Coronazeiten bitte Termin vorab...").
-   * *Beispiel*: `"room": "Mo bis Do, 09:00 bis 13:00 Uhr..."`
+*Ergebnis Repro-Skript*:
+```html
+<p>
+    Raum
+    M-012<br/>
+</p>
+```
+Der aktuelle Regex findet hier keinen Match, da er einen Doppelpunkt erwartet und die Newlines nicht flexibel genug handhabt.
 
 ## Lösungsvorschlag
+Verwendung eines robusten Regex, der:
+1. Den Doppelpunkt optional macht.
+2. Beliebige Whitespaces (inkl. Newlines) nach "Raum" erlaubt.
+3. Den Inhalt bis zum nächsten `<br/>` oder Schließ-Tag (`</p>`, `</div>`) erfasst.
 
-1. **API-Logik anpassen**: In `src/tools.py` das Feld `room` in den Rückgabe-Dictionaries von `get_lecturer_timetable` und `get_lecturer_info` ergänzen.
-2. **Scraper verbessern**:
-   * Den Regex für Räume in `src/tools.py` verfeinern (z.B. durch Längenbegrenzung oder Ausschluss von typischen Sprechzeit-Keywords).
-   * Die radikale Normalisierung aus `gemini.md` ist hier primär für den Vergleich wichtig, für die Anzeige von Räumen sollte der Originaltext (geputzt) erhalten bleiben.
-3. **Formatter prüfen**: Sicherstellen, dass der Formatter das `room`-Feld bei Dozenten-Infos auch wirklich rendert (scheint laut Grep bereits der Fall zu sein).
+Neuer Regex-Entwurf:
+```python
+r'(?:Raum|Büro)\s*:?\s*(?:<br\s*/?>\s*)?([A-Z0-9.\- ]+)\s*(?:<br\s*/?>|</p>|</div>|<strong>|<li>)'
+```
+Zusätzlich sollte der Plausibilitätscheck (Länge < 30) beibehalten werden.
 
 ## Umsetzungsschritte
-
 1. **src/tools.py**:
-   * In `get_lecturer_timetable` das Feld `"room": info.get("room")` hinzufügen.
-   * In `get_lecturer_info` das Feld `"room": info.get("room")` hinzufügen.
-   * Den `room_pattern` Regex in `_fetch_sprechzeit` (innerhalb von `build_lecturer_index`) verbessern.
-2. **src/formatter.py**: Kurze Sichtprüfung, ob `room` in `_fmt_lecturer_info` oder ähnlichem genutzt wird.
+   - Den `room_pattern` Regex in `_fetch_sprechzeit` (innerhalb von `build_lecturer_index`) aktualisieren.
+   - Den `person__user-name-title` Regex in `build_lecturer_index` prüfen, da dieser im Test `MISSING` lieferte.
 
 ## Verifizierung & Testing
-- Ausführen von `scripts/repro_room_scraping.py`.
-- Nach der Änderung sollte der Raum (sofern im Index vorhanden) korrekt ausgegeben werden.
-- (Optional) Manueller Sync-Lauf für einzelne Dozenten, um den verbesserten Scraper zu testen.
+1. Ausführen des Repro-Skripts `scripts/repro_room_structure.py` mit dem neuen Regex.
+2. Manueller Test-Lauf eines Teil-Syncs für betroffene Dozenten.
