@@ -8,6 +8,8 @@ import logging
 import sys
 import os
 import json
+import traceback
+import uuid
 from datetime import datetime, timedelta, time as _time
 from logging.handlers import RotatingFileHandler
 
@@ -80,6 +82,7 @@ log = logging.getLogger("src.bot")
 # In-Memory State für Telegram
 _bot_messages: dict[int, list[int]] = {}
 _pending_confirmation: dict[int, tuple[str, str, int, str | None]] = {}
+_error_cache: dict[str, dict] = {}
 
 _NEIN = {"nein", "ne", "n", "no", "falsch", "stimmt nicht", "stimmt nicht so", "nope"}
 _JA   = {"ja", "j", "yes", "y", "stimmt", "korrekt", "ok", "okay"}
@@ -310,6 +313,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await db.set_primary_courses(user_id, [])
         await _show_faculty_selection(query.edit_message_text, "🗑 Liste geleert.\n\n")
 
+    elif data.startswith("err_save:"):
+        if not admin._is_admin(user_id):
+            await query.answer("⛔ Nur für Admins.")
+            return
+        
+        err_id = data.split(":")[1]
+        err_data = _error_cache.get(err_id)
+        if not err_data:
+            await query.edit_message_text("⚠️ Fehlerdaten nicht mehr im Cache (Bot-Neustart?).")
+            return
+            
+        filename = admin.save_issue_from_log(err_data)
+        await query.edit_message_text(f"✅ Issue erstellt: `issues/active/{filename}`", parse_mode="Markdown")
+        # Aus Cache entfernen um Speicher zu sparen
+        _error_cache.pop(err_id, None)
+
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
@@ -496,8 +515,42 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
             os._exit(1) # Harter Exit für sofortigen Restart
     else:
         _consecutive_network_errors = 0
-        # In der Konsole nur kurz, im Logfile (da DEBUG/INFO dort alles fängt) steht der Rest
-        log.error("Unbehandelter Fehler in Bot-Logik: %s (Details in logs/bot.txt)", context.error, exc_info=False)
+        error_msg = str(context.error)
+        tb = "".join(traceback.format_exception(None, context.error, context.error.__traceback__))
+        
+        # Loggen (immer)
+        log.error("Unbehandelter Fehler in Bot-Logik: %s (Details in logs/bot.txt)", error_msg, exc_info=False)
+        
+        # Admins benachrichtigen & Cache befüllen
+        err_id = str(uuid.uuid4())[:8]
+        user_input = "N/A"
+        user_info = "System"
+        
+        if update and update.effective_user:
+            user_info = f"@{update.effective_user.username}" if update.effective_user.username else str(update.effective_user.id)
+            if update.effective_message and update.effective_message.text:
+                user_input = update.effective_message.text
+                
+        _error_cache[err_id] = {
+            "error": error_msg,
+            "traceback": tb,
+            "user_input": user_input,
+            "user_info": user_info,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Benachrichtigung an Admins
+        for aid in settings.admin_ids:
+            try:
+                keyboard = [[InlineKeyboardButton("📝 Issue erstellen", callback_data=f"err_save:{err_id}")]]
+                await context.bot.send_message(
+                    chat_id=aid,
+                    text=f"🚨 *Bot-Fehler*\nUser: {user_info}\nInput: `{user_input}`\n\nError: `{error_msg}`",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                log.warning("Konnte Admin %s nicht über Fehler benachrichtigen: %s", aid, e)
 
 async def _post_init(app) -> None:
     await db.init()

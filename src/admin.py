@@ -4,6 +4,8 @@ Admin-Kommando-Handler für den Telegram-Bot.
 
 import asyncio
 import logging
+import os
+import re
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -11,7 +13,6 @@ from src.config import settings
 from src import agent
 from src import tools as raumzeit
 from src import db
-from src import formatter
 
 log = logging.getLogger(__name__)
 
@@ -414,3 +415,49 @@ async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await msg.edit_text(f"⚠️ Fehler beim Sync: {exc}")
 
     asyncio.create_task(_bg_sync())
+
+def save_issue_from_log(data: dict) -> str:
+    """
+    Speichert einen Fehler-Log als Markdown-Issue in issues/active/.
+    Gibt den Dateinamen zurück.
+    """
+    now = datetime.now()
+    error_msg = data.get("error", "Unknown Error")
+    user_input = data.get("user_input", "N/A")
+    traceback = data.get("traceback", "No traceback available")
+    user_info = data.get("user_info", "Unknown User")
+
+    # Prägnanter Dateiname
+    clean_msg = re.sub(r'[^a-z0-9]', '-', error_msg.lower())
+    clean_msg = re.sub(r'-+', '-', clean_msg).strip("-")
+    filename = f"error-{clean_msg[:30]}-{now.strftime('%y%m%d-%H%M%S')}.md"
+    
+    path = os.path.join("issues", "active", filename)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    
+    content = f"""# Issue: {error_msg}
+
+## Status
+- **Erstellt:** {now.strftime('%d.%m.%Y %H:%M:%S')}
+- **User:** {user_info}
+
+## Fehlerbeschreibung
+{error_msg}
+
+## Usereingabe
+```
+{user_input}
+```
+
+## Traceback
+```python
+{traceback}
+```
+
+## Kontext & Logs
+(Automatisch generiert aus Telegram Error Handler)
+"""
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+        
+    return filename
