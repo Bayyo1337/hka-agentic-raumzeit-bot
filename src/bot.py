@@ -672,7 +672,15 @@ async def main_async() -> None:
         while True:
             await asyncio.sleep(3600)
     
-    await app.updater.stop(); await app.stop(); await app.shutdown()
+    # Shutdown-Sequenz mit Logging
+    log.debug("Shutdown-Sequenz gestartet...")
+    log.debug("Stoppe Telegram-Updater (wartet auf Polling-Timeout)...")
+    await app.updater.stop()
+    log.debug("Stoppe Application...")
+    await app.stop()
+    log.debug("Führe Application-Shutdown durch...")
+    await app.shutdown()
+    log.info("Bot erfolgreich heruntergefahren.")
 
 def main():
     try: asyncio.run(main_async())

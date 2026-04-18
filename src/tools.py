@@ -794,7 +794,8 @@ async def build_course_index() -> int:
         results = await asyncio.gather(*[_probe_course_key(key) for _, _, key in batch])
         sem_results.extend(results)
         if (i // 40) % 4 == 0:
-            log.info("Kurs-Index: Phase 1 Fortschritt: %d/%d Kombinationen geprüft", min(i + 40, len(sem_tasks)), len(sem_tasks))
+            current_abbr = batch[0][0]
+            log.info("Kurs-Index: Phase 1: Prüfe %s... (%d/%d)", current_abbr, min(i + 40, len(sem_tasks)), len(sem_tasks))
 
     valid_base: list[tuple[str, int]] = []  # (abbreviation, semester)
     for (abbr, sem, _), ok in zip(sem_tasks, sem_results):
@@ -822,7 +823,8 @@ async def build_course_index() -> int:
         results = await asyncio.gather(*[_probe_course_key(key) for _, _, _, key in batch])
         grp_results.extend(results)
         if (i // 40) % 10 == 0:
-            log.info("Kurs-Index: Phase 2 Fortschritt: %d/%d Kombinationen geprüft", min(i + 40, len(grp_tasks)), len(grp_tasks))
+            current_base = f"{batch[0][0]}.{batch[0][1]}"
+            log.info("Kurs-Index: Phase 2: Scanne Gruppen für %s... (%d/%d)", current_base, min(i + 40, len(grp_tasks)), len(grp_tasks))
 
     # Ergebnisse sammeln
     entries: list[dict] = []
