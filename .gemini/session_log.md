@@ -108,4 +108,25 @@ Der Synchronisierungsvorgang des Dozenten-Index war extrem langsam (~7-10 Min). 
 - Keine neuen Abhängigkeiten.
 
 ### Git
+- Commit: `cdb2d0d`
+
+## Task: Verbesserung der Log-Transparenz (Shutdown & Sync)
+Die Verzögerung beim Shutdown wurde durch Einzelschritte mit Debug-Logs sichtbar gemacht. Der Kurs-Index-Sync zeigt nun kontextbezogene Informationen statt nur nackte Zahlen.
+
+### Changes
+- **src/bot.py**:
+    - Shutdown-Sequenz in `main_async` aufgeteilt.
+    - Debug-Logs für Updater, Application und Shutdown hinzugefügt.
+- **src/tools.py**:
+    - `build_course_index` (Phase 1): Zeigt nun den aktuell geprüften Studiengang an.
+    - `build_course_index` (Phase 2): Zeigt nun das aktuell geprüfte Basis-Semester an.
+
+### Validation
+- **Syntax**: `py_compile` bestanden.
+- **Logging**: Manuelle Prüfung der neuen Log-Struktur in `src/tools.py`.
+
+### Dependencies
+- Keine neuen Abhängigkeiten.
+
+### Git
 - Commit: (steht noch aus)
