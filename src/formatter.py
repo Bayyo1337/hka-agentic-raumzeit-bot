@@ -594,3 +594,35 @@ def format_results(collected: list[tuple[str, dict]], user_message: str) -> str:
     name, result = collected[-1]
     fmt = _FORMATTERS.get(name)
     return fmt(result) if fmt else str(result)
+
+def format_weekly_plan(bookings: list[dict]) -> list[str]:
+    """Erzeugt eine Liste von Strings (einer pro Tag) für die Wochenübersicht."""
+    if not bookings:
+        return ["📅 *Dein Stundenplan*\n✅ Keine Vorlesungen in dieser Woche gefunden."]
+
+    from collections import defaultdict
+    by_date = defaultdict(list)
+    for b in bookings:
+        date_str = b.get("date") or b.get("start", "").split("T")[0]
+        if date_str:
+            by_date[date_str].append(b)
+
+    day_messages = []
+    # Alle Tage der aktuellen Woche sortiert durchgehen
+    for date_str in sorted(by_date.keys()):
+        try:
+            dt = _date.fromisoformat(date_str)
+            # Nur Mo-Fr anzeigen, Sa nur wenn Termine da sind, So ignorieren
+            if dt.weekday() >= 6: continue
+            if dt.weekday() == 5 and not by_date[date_str]: continue
+            
+            day_label = _fmt_date(date_str)
+            timeline = _render_timeline(by_date[date_str], day_label)
+            day_messages.append("\n".join(timeline))
+        except:
+            continue
+            
+    if not day_messages:
+        return ["📅 *Dein Stundenplan*\n✅ Keine Vorlesungen in dieser Woche gefunden."]
+        
+    return day_messages

@@ -56,6 +56,12 @@ async def init() -> None:
                 primary_course    TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS user_plan_cache (
+                user_id   INTEGER PRIMARY KEY,
+                plan_json TEXT NOT NULL,
+                cached_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS test_cases (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 query_text TEXT UNIQUE,
@@ -357,6 +363,57 @@ async def set_primary_course(user_id: int, course: str | None) -> None:
         await db.execute(
             "UPDATE users SET primary_course=? WHERE user_id=?", (course.upper() if course else None, user_id)
         )
+        await db.commit()
+
+
+async def set_primary_courses(user_id: int, courses: list[str]) -> None:
+    """Setzt mehrere Kurse als JSON-Liste."""
+    val = json.dumps(courses) if courses else None
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET primary_course=? WHERE user_id=?", (val, user_id)
+        )
+        await db.commit()
+
+
+async def add_primary_course(user_id: int, course: str) -> None:
+    """Fügt einen Kurs zur Liste hinzu (verhindert Duplikate)."""
+    u = await get_user(user_id)
+    raw = u.get("primary_course") if u else None
+    try:
+        courses = json.loads(raw) if raw else []
+        if not isinstance(courses, list): courses = [str(raw)]
+    except:
+        courses = [raw] if raw else []
+    
+    if course.upper() not in [c.upper() for c in courses]:
+        courses.append(course.upper())
+        await set_primary_courses(user_id, courses)
+
+
+async def get_user_plan_cache(user_id: int, max_age_hours: int = 4) -> dict | None:
+    """Gibt den Plan aus dem Cache zurück, wenn er nicht zu alt ist."""
+    cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT plan_json FROM user_plan_cache WHERE user_id=? AND cached_at>?",
+            (user_id, cutoff),
+        ) as cur:
+            row = await cur.fetchone()
+    return json.loads(row[0]) if row else None
+
+
+async def save_user_plan_cache(user_id: int, plan_data: dict) -> None:
+    """Speichert einen Plan im Cache."""
+    now = datetime.now().isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO user_plan_cache (user_id, plan_json, cached_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                plan_json = excluded.plan_json,
+                cached_at = excluded.cached_at
+        """, (user_id, json.dumps(plan_data, ensure_ascii=False), now))
         await db.commit()
 
 

@@ -50,4 +50,4 @@ Admins können nun Fehlermeldungen in Telegram direkt per Button als Issue in `i
 - **Syntax**: `py_compile` bestanden.
 
 ### Git
-- Commit: (steht noch aus)
+- Commit: `402bbd9`
