@@ -203,39 +203,43 @@ async def build_lecturer_index() -> int:
             matched[mail_key] = {"name": p["name"], "email": p["email"]}
             if p.get("url"): to_scrape.append((mail_key, p["url"]))
 
-    # Sprechzeiten asynchron laden (mit Batching um Server zu schonen)
+    # Sprechzeiten asynchron laden (mit Semaphor-Steuerung und Shared Client)
     if to_scrape:
         log.info("Dozenten-Index: Scrape Sprechzeiten für %d Dozenten...", len(to_scrape))
-        async def _fetch_sprechzeit(kuerzel: str, profile_url: str):
-            try:
-                async with httpx.AsyncClient(base_url=HKA_BASE, timeout=10) as c:
-                    r = await c.get(profile_url, headers={"User-Agent": "Mozilla/5.0"})
-                if r.status_code == 200:
-                    import re as _re
-                    # 1. Suche nach Sprechzeiten-Block (Sprechzeiten: <br/> ...)
-                    pattern = r'(?:Sprechzeit(?:en)?|Sprechstunde(?:n)?)\s*:\s*(?:<br\s*/?>\s*)?(.*?)\s*(?:</p>|<strong>|<li>)'
-                    match = _re.search(pattern, r.text, _re.DOTALL | _re.IGNORECASE)
-                    if match:
-                        text = _re.sub(r'<[^>]*>', ' ', match.group(1)).strip()
-                        matched[kuerzel]["sprechzeit"] = _re.sub(r'\s+', ' ', text)
-                    
-                    # 2. Suche nach Raum/Büro
-                    # Robustheit: Doppelpunkt optional, stoppt beim nächsten HTML-Tag (<)
-                    room_pattern = r'(?:Raum|Büro)\s*:?\s*(?:<br\s*/?>\s*)?([^<]+)'
-                    rmatch = _re.search(room_pattern, r.text, _re.DOTALL | _re.IGNORECASE)
-                    if rmatch:
-                        room_text = _re.sub(r'<[^>]*>', ' ', rmatch.group(1)).strip()
-                        # Plausibilitätscheck: Raumnummern sind meist kurz und enthalten keine Uhrzeiten
-                        if 1 < len(room_text) < 30 and " Uhr" not in room_text and "Termin" not in room_text:
-                            matched[kuerzel]["room"] = _re.sub(r'\s+', ' ', room_text)
+        sem = asyncio.Semaphore(20)
+        scraped_count = 0
 
-            except Exception: pass
+        async def _fetch_sprechzeit(client: httpx.AsyncClient, kuerzel: str, profile_url: str):
+            nonlocal scraped_count
+            async with sem:
+                try:
+                    r = await client.get(profile_url, headers={"User-Agent": "Mozilla/5.0"})
+                    if r.status_code == 200:
+                        import re as _re
+                        # 1. Suche nach Sprechzeiten-Block (Sprechzeiten: <br/> ...)
+                        pattern = r'(?:Sprechzeit(?:en)?|Sprechstunde(?:n)?)\s*:\s*(?:<br\s*/?>\s*)?(.*?)\s*(?:</p>|<strong>|<li>)'
+                        match = _re.search(pattern, r.text, _re.DOTALL | _re.IGNORECASE)
+                        if match:
+                            text = _re.sub(r'<[^>]*>', ' ', match.group(1)).strip()
+                            matched[kuerzel]["sprechzeit"] = _re.sub(r'\s+', ' ', text)
+                        
+                        # 2. Suche nach Raum/Büro
+                        # Robustheit: Doppelpunkt optional, stoppt beim nächsten HTML-Tag (<)
+                        room_pattern = r'(?:Raum|Büro)\s*:?\s*(?:<br\s*/?>\s*)?([^<]+)'
+                        rmatch = _re.search(room_pattern, r.text, _re.DOTALL | _re.IGNORECASE)
+                        if rmatch:
+                            room_text = _re.sub(r'<[^>]*>', ' ', rmatch.group(1)).strip()
+                            # Plausibilitätscheck: Raumnummern sind meist kurz und enthalten keine Uhrzeiten
+                            if 1 < len(room_text) < 30 and " Uhr" not in room_text and "Termin" not in room_text:
+                                matched[kuerzel]["room"] = _re.sub(r'\s+', ' ', room_text)
+                except Exception: pass
+                finally:
+                    scraped_count += 1
+                    if scraped_count % 50 == 0 or scraped_count == len(to_scrape):
+                        log.info("Dozenten-Index: Sprechzeiten scrapen: %d/%d abgeschlossen", scraped_count, len(to_scrape))
 
-        for i in range(0, len(to_scrape), 20):
-            await asyncio.gather(*[_fetch_sprechzeit(k, u) for k, u in to_scrape[i:i + 20]])
-            if (i // 20) % 5 == 0:
-                log.info("Dozenten-Index: Sprechzeiten scrapen: %d/%d abgeschlossen", min(i + 20, len(to_scrape)), len(to_scrape))
-            await asyncio.sleep(0.5) # Kurze Pause zwischen Batches
+        async with httpx.AsyncClient(base_url=HKA_BASE, timeout=15) as client:
+            await asyncio.gather(*[_fetch_sprechzeit(client, k, u) for k, u in to_scrape])
 
     # 4. Bestehende manuelle Einträge erhalten
     try:
