@@ -51,3 +51,24 @@ Admins können nun Fehlermeldungen in Telegram direkt per Button als Issue in `i
 
 ### Git
 - Commit: `402bbd9`
+
+## Task: Modularisierung des Sync-Befehls
+Der `/sync` Befehl wurde um Parameter erweitert, um gezielt nur Kurs- oder Dozentendaten zu aktualisieren.
+
+### Changes
+- **src/admin.py**:
+    - `cmd_sync` wertet nun Argumente aus (`all`, `courses`, `lecturers`).
+    - Hintergrund-Sync führt nur die gewählten Kategorien aus.
+- **src/bot.py**:
+    - Admin-Hilfetext für `/sync` aktualisiert.
+
+### Validation
+- **Logic**: Test-Skript `scripts/test_modular_sync.py` verifiziert:
+    - Standard-Sync (`/sync` oder `/sync all`) startet beide Prozesse.
+    - `/sync courses` startet nur Kurs-Index Aufbau.
+    - `/sync lecturers` startet nur Dozenten-Index Aufbau.
+    - Ungültige Parameter werden abgefangen.
+- **Syntax**: `py_compile` bestanden.
+
+### Git
+- Commit: (steht noch aus)
