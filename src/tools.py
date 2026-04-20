@@ -996,6 +996,25 @@ _CANTEENS_CACHE: dict[str, str] = {} # Name/Kürzel -> ID
 _MEALS_CACHE: dict[str, dict] = {}    # meal_id -> meal_details
 _MEALS_BY_NAME_CACHE: dict[str, str] = {} # normierter_name -> meal_id
 
+_ALLERGEN_MAP = {
+    "WE": "Weizen", "RO": "Roggen", "DI": "Dinkel", "EI": "Ei", "FI": "Fisch", 
+    "ER": "Erdnüsse", "SO": "Soja", "ML": "Milch", "SL": "Sellerie", "SN": "Senf", 
+    "SE": "Sesam", "SU": "Schwefeldioxid/Sulfite", "LU": "Lupinen", "WT": "Weichtiere", 
+    "HA": "Haselnüsse", "HN": "Haselnüsse", "MA": "Mandeln", "WA": "Walnüsse", "KA": "Kaschunüsse", 
+
+    "PE": "Pekannüsse", "PA": "Paranüsse", "PI": "Pistazien", "QD": "Queenslandnüsse"
+}
+
+_ADDITIVE_MAP = {
+    "COLORANT": "Farbstoff", "PRESERVING_AGENTS": "Konservierungsstoff", 
+    "ANTIOXIDANT_AGENTS": "Antioxidationsmittel", "FLAVOR_ENHANCER": "Geschmacksverstärker", 
+    "PHOSPHATE": "Phosphat", "SULFUR_DIOXIDE": "Geschwefelt", "BLACKENED": "Geschwärzt", 
+    "SURFACE_WAXED": "Gewachst", "SWEETENER": "Süßungsmittel", 
+    "PHENYLALANINE": "Enthält eine Phenylalaninquelle", "TAURINE": "Taurin", 
+    "NITRITE_PICKLING_SALT": "Nitritpökelsalz", "CAFFEINE": "Koffeinhaltig", 
+    "QUININE": "Chininhaltig", "ALCOHOL": "Alkohol"
+}
+
 async def _get_canteen_id(query: str | None = None) -> str:
     """Löst einen Mensa-Namen zu einer ID auf. Default: Mensa Moltke."""
     global _CANTEENS_CACHE
@@ -1069,6 +1088,10 @@ async def get_mensa_menu(canteen: str | None = None, date: str | None = None) ->
                 l_name = line.get("name", "Diverses")
                 l_id = line.get("id")
                 for m in line.get("meals", []):
+                    # Dekodierung von Allergenen und Zusatzstoffen
+                    m["allergens"] = [_ALLERGEN_MAP.get(a, a) for a in m.get("allergens", [])]
+                    m["additives"] = [_ADDITIVE_MAP.get(a, a) for a in m.get("additives", [])]
+
                     # Kompatibilität zum Formatter und Fixes
                     m["line"] = {"name": l_name}
                     m["line_id"] = l_id # Für get_mensa_meal_details

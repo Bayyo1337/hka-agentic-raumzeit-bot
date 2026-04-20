@@ -1,0 +1,1 @@
+aktuell bekommt das llm ja bei jeder anfrage den kompletten prompt, mit allen funktionen. Würde es sinn machen, davor schon zu lesen ob dort z.B. Mensa vorkommt um den LLM nur die Mensa Optionen zu geben und so Tokens zu sparen?

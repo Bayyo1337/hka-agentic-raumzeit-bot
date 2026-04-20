@@ -155,4 +155,22 @@ Nutzer-Anfragen nach Allergenen schlugen fehl, wenn der In-Memory Cache flüchti
 - **Syntax**: `py_compile` bestanden.
 
 ### Git
+- Commit: `8b84ec1`
+
+## Task: Dekodierung von Mensa-Allergenen & Zusatzstoffen
+Die Mensa-API liefert Allergene und Zusatzstoffe nur als technische Kürzel (z.B. WE, COLORANT). Diese wurden nun in lesbaren Klartext umgewandelt.
+
+### Changes
+- **src/tools.py**:
+    - `_ALLERGEN_MAP` und `_ADDITIVE_MAP` Dictionaries mit umfassenden Mappings hinzugefügt.
+    - `get_mensa_menu`: Dekodierungs-Logik integriert, die Kürzel direkt nach dem API-Abruf ersetzt.
+- **Repository**:
+    - Feature-Idee `dekodierung-allergene.md` verarbeitet und Spec nach `features/done/` verschoben.
+
+### Validation
+- **Logic**: `scripts/test_mensa_decoding.py` (temporär) verifizierte korrekte Klartext-Ausgabe für Weizen, Milch, Haselnüsse, Farbstoffe etc.
+- **Robustheit**: Fehlende Mappings werden sicher als Original-Kürzel beibehalten.
+- **Syntax**: `py_compile` bestanden.
+
+### Git
 - Commit: (steht aus)
