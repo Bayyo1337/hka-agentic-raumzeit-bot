@@ -1,1 +1,0 @@
-macht es sinn, den sync befehl zu unterteilen? das nicht immer alles neu gebaut wird, sondern nur die unterkategorie die man wählt? oder natürlich mit sync all alles?

@@ -129,4 +129,4 @@ Die Verzögerung beim Shutdown wurde durch Einzelschritte mit Debug-Logs sichtba
 - Keine neuen Abhängigkeiten.
 
 ### Git
-- Commit: (steht noch aus)
+- Commit: `3ddba4b`
