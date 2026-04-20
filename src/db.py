@@ -67,6 +67,15 @@ async def init() -> None:
                 query_text TEXT UNIQUE,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS mensa_meals (
+                meal_id   TEXT PRIMARY KEY,
+                name      TEXT NOT NULL,
+                meal_json TEXT NOT NULL,
+                date      TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_mensa_date ON mensa_meals(date);
+            CREATE INDEX IF NOT EXISTS idx_mensa_name ON mensa_meals(name);
         """)
         # Schema-Migration: Falls die Spalten in users fehlen
         try:
@@ -79,6 +88,10 @@ async def init() -> None:
             await db.execute("ALTER TABLE users ADD COLUMN primary_course TEXT")
         except: pass
         
+        # Cleanup: Alte Mensa-Einträge löschen (> 14 Tage)
+        cutoff = (datetime.now() - timedelta(days=14)).date().isoformat()
+        await db.execute("DELETE FROM mensa_meals WHERE date < ?", (cutoff,))
+
         await db.commit()
     log.info("Datenbank initialisiert: %s", DB_PATH)
 
@@ -505,3 +518,40 @@ async def get_all_test_cases() -> list[str]:
         async with db.execute("SELECT query_text FROM test_cases ORDER BY id DESC") as cur:
             rows = await cur.fetchall()
             return [r[0] for r in rows]
+
+# ── Mensa-Cache ──────────────────────────────────────────────────────────────
+
+async def save_mensa_meals(meals: list[dict]) -> None:
+    """Speichert Gerichte in der DB."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.executemany("""
+            INSERT INTO mensa_meals (meal_id, name, meal_json, date)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(meal_id) DO UPDATE SET
+                name      = excluded.name,
+                meal_json = excluded.meal_json,
+                date      = excluded.date
+        """, [(m["id"], m["name"], json.dumps(m, ensure_ascii=False), m["date"]) for m in meals])
+        await db.commit()
+
+
+async def get_mensa_meal_by_id(meal_id: str) -> dict | None:
+    """Sucht ein Gericht nach seiner UUID in der DB."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT meal_json FROM mensa_meals WHERE meal_id=?", (meal_id,)
+        ) as cur:
+            row = await cur.fetchone()
+    return json.loads(row[0]) if row else None
+
+
+async def get_all_mensa_meals_for_fuzzy() -> dict[str, str]:
+    """Gibt alle bekannten Gerichtsnamen -> meal_id zurück (für Fuzzy-Matching)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Wir begrenzen auf die letzten 3 Tage, um den Suchraum klein und aktuell zu halten
+        cutoff = (datetime.now() - timedelta(days=3)).date().isoformat()
+        async with db.execute(
+            "SELECT name, meal_id FROM mensa_meals WHERE date >= ?", (cutoff,)
+        ) as cur:
+            rows = await cur.fetchall()
+    return {r[0]: r[1] for r in rows}
