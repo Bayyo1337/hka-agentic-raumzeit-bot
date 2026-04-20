@@ -994,6 +994,7 @@ async def get_campus_map(query: str) -> dict:
 
 _CANTEENS_CACHE: dict[str, str] = {} # Name/Kürzel -> ID
 _MEALS_CACHE: dict[str, dict] = {}    # meal_id -> meal_details
+_MEALS_BY_NAME_CACHE: dict[str, str] = {} # normierter_name -> meal_id
 
 async def _get_canteen_id(query: str | None = None) -> str:
     """Löst einen Mensa-Namen zu einer ID auf. Default: Mensa Moltke."""
@@ -1022,7 +1023,7 @@ async def _get_canteen_id(query: str | None = None) -> str:
 
 async def get_mensa_menu(canteen: str | None = None, date: str | None = None) -> dict:
     """Holt den Speiseplan einer Mensa via api.mensa-ka.de (GraphQL)."""
-    global _MEALS_CACHE
+    global _MEALS_CACHE, _MEALS_BY_NAME_CACHE
     if not date:
         date = _date.today().isoformat()
     
@@ -1085,7 +1086,12 @@ async def get_mensa_menu(canteen: str | None = None, date: str | None = None) ->
                                 m["price"][k] = m["price"][k] / 100.0
                     
                     flattened_meals.append(m)
-                    _MEALS_CACHE[m["id"]] = m
+                    
+                    # Caching
+                    m_id = m["id"]
+                    _MEALS_CACHE[m_id] = m
+                    # Zusätzlich nach normiertem Namen cachen für LLM-Robustheit
+                    _MEALS_BY_NAME_CACHE[_norm(m["name"])] = m_id
             
             if not flattened_meals:
                  return {"canteen": c_name, "date": date, "closed": True, "meals": []}
@@ -1103,13 +1109,27 @@ async def _fetch_canteens_raw():
 
 async def get_mensa_meal_details(meal_id: str) -> dict:
     """Holt Allergene und Zusatzstoffe für ein spezifisches Gericht."""
-    # 1. Aus Cache versuchen
+    # 1. Aus Cache versuchen (UUID Match)
     if meal_id in _MEALS_CACHE:
         return _MEALS_CACHE[meal_id]
         
-    # 2. API Fallback (benötigt leider lineId und date im neuen Schema)
-    # Da wir diese hier nicht haben, ist der Cache essentiell.
-    # Wir könnten versuchen, alle Linien nochmal zu scannen, aber das ist teuer.
+    # 2. Falls kein UUID Match: Versuche Name-Lookup (Robustheit für LLM-Halluzinationen)
+    # Das LLM schickt oft Teile des Namen als ID
+    import difflib
+    q_norm = _norm(meal_id)
+    
+    # Exakter Match im Namens-Cache?
+    if q_norm in _MEALS_BY_NAME_CACHE:
+        return _MEALS_CACHE[_MEALS_BY_NAME_CACHE[q_norm]]
+    
+    # Fuzzy Match über alle bekannten Namen
+    matches = difflib.get_close_matches(q_norm, _MEALS_BY_NAME_CACHE.keys(), n=1, cutoff=0.6)
+    if matches:
+        target_id = _MEALS_BY_NAME_CACHE[matches[0]]
+        log.info("Mensa-Detail: Name-Match für '%s' -> '%s' (ID: %s)", meal_id, matches[0], target_id)
+        return _MEALS_CACHE[target_id]
+
+    # 3. API Fallback (benötigt leider lineId und date im neuen Schema)
     return {"error": "Gerichts-Details aktuell nur direkt nach der Speiseplan-Abfrage verfügbar."}
 
 
