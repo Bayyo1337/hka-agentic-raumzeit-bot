@@ -133,20 +133,35 @@ Die Verzögerung beim Shutdown wurde durch Einzelschritte mit Debug-Logs sichtba
 
 # Session Log - 20.04.2026
 
-## Task: /mensa Command Shortcut & Text-Fix
-Nutzer waren verwirrt über einen Hinweistext, der auf einen nicht existierenden `/mensa` Befehl verwies. Zudem fehlte dieser intuitiv erwartete Shortcut.
+## Task: Harmonisierung Hilfe & Admin-Dashboard
+Nutzer und Admins wünschten sich präzisere Erklärungen und eine bessere Übersicht der Befehle.
 
 ### Changes
-- **src/tools.py**:
-    - Hinweistext in `get_mensa_meal_details` korrigiert (Verweis auf `/mensa` entfernt).
 - **src/bot.py**:
-    - `cmd_mensa` Handler implementiert: Ruft standardmäßig das heutige Menü der Mensa Moltke ab.
-    - `/mensa` in `_USER_COMMANDS` und `/help` integriert.
-    - Command in `main_async` registriert.
+    - `cmd_start`: Auf kompakte Einführung reduziert.
+    - `cmd_help`: Detaillierte Referenz aller Befehle (inkl. `/bug`, `/mensa`) mit Parameter-Hinweisen.
+- **src/admin.py**:
+    - `cmd_admin`: Neue Sektion "Schnellzugriff" hinzugefügt, die alle Admin-Befehle und Parameter kurz erklärt.
+- **Syntax**: IndentationError in `admin.py` behoben.
 
 ### Validation
-- **Text-Check**: `scripts/repro_mensa_command.py` bestätigte die neue neutrale Fehlermeldung.
-- **Bot-Start**: `py_compile` erfolgreich für alle geänderten Dateien.
+- **Syntax**: `py_compile` für `bot.py` und `admin.py` erfolgreich.
+- **Inhalt**: Manueller Review der Markdown-Struktur in den geänderten Funktionen.
+
+### Git
+- Commit: (steht aus)
+
+
+## Task: Fakultäten-Filterung bei /setcourse
+Nutzer beschwerten sich über eine unübersichtliche Liste (57 Einträge), die viele irrelevante Verwaltungseinheiten enthielt.
+
+### Changes
+- **src/bot.py**:
+    - `_show_faculty_selection`: Filter implementiert, der nur Einheiten mit dem Flag `faculty: true` berücksichtigt. Die Liste wurde dadurch auf die 6 echten Fakultäten reduziert.
+
+### Validation
+- **Analyse**: `scripts/inspect_departments.py` (simuliert) bestätigte die Existenz des `faculty` Flags in den Rohdaten.
+- **Syntax**: `py_compile` erfolgreich.
 
 ### Git
 - Commit: (steht aus)

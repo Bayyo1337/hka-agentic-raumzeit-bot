@@ -97,7 +97,19 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 f"{total} ges.  |  {tok:,} tok"
             )
 
-    await update.message.reply_text("\n".join(lines))
+    lines += [
+        "",
+        "🛠 *Schnellzugriff:*",
+        "• `/sync [all|courses|lecturers]` – Datenabgleich",
+        "• `/user [@username|ID]` – Nutzer-Details",
+        "• `/broadcast [Text]` – Rundnachricht senden",
+        "• `/loglevel [DEBUG|INFO|WARNING]` – Logtiefe",
+        "• `/maintenance [An|Aus]` – Wartungsmodus",
+        "• `/togglepersonal` – MyPlan Feature an/aus",
+        "• `/togglemap` – Karten Feature an/aus",
+    ]
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
 @_require_admin
@@ -483,3 +495,36 @@ def save_issue_from_log(data: dict) -> str:
         
     return filename
 
+
+def save_user_issue(title: str, context_cmd: str, comment: str, user_info: str) -> str:
+    """Speichert ein vom Nutzer gemeldetes Feedback als MD-Issue."""
+    import re
+    from datetime import datetime
+    import os
+    now = datetime.now()
+    clean_title = re.sub(r'[^a-z0-9]', '-', title.lower())
+    clean_title = re.sub(r'-+', '-', clean_title).strip("-")
+    filename = f"user-{clean_title[:30]}-{now.strftime('%y%m%d-%H%M%S')}.md"
+    
+    path = os.path.join("issues", "active", filename)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    
+    content = f"""# User Issue: {title}
+
+## Status
+- **Erstellt:** {now.strftime('%d.%m.%Y %H:%M:%S')}
+- **User:** {user_info}
+
+## Beschreibung
+{comment}
+
+## Kontext (Letzter Befehl)
+> {context_cmd}
+
+---
+*Erstellt via /bug Kommando.*
+"""
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+        
+    return filename

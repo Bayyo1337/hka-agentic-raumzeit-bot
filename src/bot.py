@@ -84,6 +84,7 @@ log = logging.getLogger("src.bot")
 _bot_messages: dict[int, list[int]] = {}
 _pending_confirmation: dict[int, tuple[str, str, int, str | None]] = {}
 _error_cache: dict[str, dict] = {}
+_bug_reports: dict[int, dict] = {} # user_id -> {state, title, context, comment}
 
 _NEIN = {"nein", "ne", "n", "no", "falsch", "stimmt nicht", "stimmt nicht so", "nope"}
 _JA   = {"ja", "j", "yes", "y", "stimmt", "korrekt", "ok", "okay"}
@@ -91,6 +92,7 @@ _JA   = {"ja", "j", "yes", "y", "stimmt", "korrekt", "ok", "okay"}
 _USER_COMMANDS = [
     BotCommand("start", "Einführung & Kurzhilfe"),
     BotCommand("help", "Ausführliche Hilfe & Beispiele"),
+    BotCommand("bug", "Fehler melden oder Feedback geben"),
     BotCommand("mensa", "Aktueller Speiseplan der Mensa Moltke"),
     BotCommand("myplan", "Dein persönlicher Stundenplan"),
     BotCommand("setcourse", "Eigener Studiengang hinterlegen"),
@@ -116,37 +118,35 @@ def _command_help(is_admin: bool) -> str:
     lines = [
         "📖 *Raumzeit KI-Bot Hilfe*",
         "",
-        "Du kannst mich einfach in natürlicher Sprache fragen. Hier sind einige Beispiele:",
+        "Frag mich einfach in natürlicher Sprache. Beispiele:",
         "• *Räume:* \"Wann ist M-102 heute frei?\" oder \"Wo ist Gebäude E?\"",
-        "• *Kurse:* \"Stundenplan MABB Semester 7\" oder \"Was habe ich am Mittwoch?\"",
-        "• *Dozenten:* \"Wo unterrichtet Peter Offermann?\"",
-        "• *Kalender:* \"Wann sind die nächsten Prüfungen?\"",
+        "• *Kurse:* \"Stundenplan MABB 2\" oder \"Was habe ich morgen?\"",
+        "• *Dozenten:* \"Sprechzeiten von Peter Offermann\"",
+        "• *Mensa:* \"Was gibt es heute zu essen?\" oder \"Allergene im Seelachs\"",
         "",
+        "📜 *Benutzer-Befehle:*",
+        "/help – Diese Referenz anzeigen",
+        "/mensa – Heutiger Speiseplan (Moltke)",
+        "/bug – Fehler melden oder Feedback geben (interaktiv)",
+        "/reset – Aktuellen Gesprächskontext löschen",
+        "/stats – Deine Tokens und Limits einsehen",
     ]
     if _personal_features[0]:
-        lines.append("💡 *Tipp:* Nutze `/setcourse`, um deine Semester zu speichern. Dann weiß ich bei Fragen wie \"Was habe ich heute?\" automatisch, welcher Plan gemeint ist.\n")
-    
-    lines += [
-        "📜 *Befehle:*",
-        "/help – Diese ausführliche Hilfe",
-        "/mensa – Aktueller Speiseplan (Moltke)",
-        "/stats – Deine Tokens, Limits und gespeicherten Kurse",
-        "/reset – Löscht den aktuellen Gesprächskontext",
-    ]
-    if _personal_features[0]:
-        lines.insert(-2, "/myplan – Dein persönlicher Wochenstundenplan")
-        lines.insert(-2, "/setcourse – Geführte Auswahl deines Studiengangs")
+        lines.insert(-2, "/myplan – Deinen gespeicherten Wochenplan zeigen")
+        lines.insert(-2, "/setcourse – Deinen Studiengang speichern (interaktiv)")
+        lines.insert(-2, "/setcourse [Key] – Kurs direkt speichern (z.B. `/setcourse MABB.7`) ")
 
     if is_admin:
         lines += [
             "",
             "🔧 *Admin-Befehle:*",
-            "/admin – Volle System-Übersicht",
-            "/sync [all|courses|lecturers] – Datenabgleich mit HKA",
-            "/togglepersonal – /myplan Feature an/aus",
-            "/togglemap – /togglemap Feature an/aus",
-            "/loglevel <level> – Debug-Modus steuern",
-            "/broadcast <text> – Nachricht an alle senden",
+            "/admin – Systemstatus & Nutzerstatistik",
+            "/sync [all|courses|lecturers] – Daten manuell abgleichen",
+            "/broadcast [Text] – Nachricht an alle Nutzer senden",
+            "/loglevel [DEBUG|INFO|WARNING] – Detailtiefe ändern",
+            "/togglepersonal – Feature 'Eigener Plan' an/aus",
+            "/togglemap – Feature 'Lagepläne' an/aus",
+            "/maintenance [Text] – Wartungsmodus (de)aktivieren",
         ]
     return "\n".join(lines)
 
@@ -158,18 +158,20 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    is_admin = admin._is_admin(user_id)
     text = (
-        "🏫 *Raumzeit-Bot*\n\n"
-        "Stell mir einfach eine Frage auf Deutsch, z.B.:\n"
-        "• Wann ist Raum M-102 heute frei?\n"
-        "• Wo ist das Gebäude LI?\n"
-        "• Zeig mir den Stundenplan von MABB Semester 7\n\n"
-        + _command_help(is_admin)
-        + "\n\n📄 [Quellcode (AGPL-3.0)](https://github.com/Bayyo1337/hka-agentic-raumzeit-bot)"
+        "🏫 *Willkommen beim Raumzeit KI-Bot!*\n\n"
+        "Ich helfe dir bei Fragen rund um den Campus, Stundenpläne und die Mensa.\n\n"
+        "💡 *So fragst du mich:*\n"
+        "Schreibe mir einfach eine Nachricht wie:\n"
+        "_\"Wo unterrichtet Prof. Offermann am Dienstag?\"_\n"
+        "_\"Welche Vorlesungen hat MABB Semester 2 morgen?\"_\n"
+        "_\"Was gibt es heute in der Mensa?\"_\n\n"
+        "Nutze `/help` für eine Liste aller Befehle.\n"
+        "Nutze `/setcourse`, um dein Studium für personalisierte Fragen zu hinterlegen."
     )
     msg = await update.message.reply_text(text, parse_mode="Markdown")
     _bot_messages.setdefault(update.effective_chat.id, []).append(msg.message_id)
+
 
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
@@ -214,20 +216,34 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_setcourse(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Interaktiver Assistent zum Festlegen des eigenen Studiengangs (Multi-Select)."""
+    """Interaktiver Assistent oder Shortcut zum Festlegen des eigenen Studiengangs."""
     if not _personal_features[0]:
         await update.message.reply_text("💡 Dieses Feature ist aktuell deaktiviert.")
         return
+    
+    # Shortcut-Logik: /setcourse MABB.7
+    if context.args:
+        full_key = context.args[0].upper().replace("_", ".")
+        user_id = update.effective_user.id
+        await db.add_primary_course(user_id, full_key)
+        await update.message.reply_text(f"✅ Kurs `{full_key}` wurde zu deinem Profil hinzugefügt.")
+        return
+
     await _show_faculty_selection(update.message.reply_text)
 
 
 async def _show_faculty_selection(reply_func, text_prefix=""):
     try:
         faculties = await raumzeit.get_departments()
+        # Nur echte Fakultaeten anzeigen (Dezernate etc. ausblenden)
+        faculties = [f for f in faculties if f.get("faculty")]
+        
         keyboard = []
         for f in faculties:
-            name = f.get("name") or f.get("shortName", "Unknown")
-            keyboard.append([InlineKeyboardButton(name, callback_data=f"setc_fac:{f['id']}")])
+            # Die API nutzt 'name' als ID (Kürzel)
+            fac_id = f.get("name")
+            display_name = f.get("longName") or fac_id
+            keyboard.append([InlineKeyboardButton(display_name, callback_data=f"setc_fac:{fac_id}")])
         
         keyboard.append([InlineKeyboardButton("❌ Abbrechen / Beenden", callback_data="setc_abort")])
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -239,6 +255,16 @@ async def _show_faculty_selection(reply_func, text_prefix=""):
     except Exception as e:
         await reply_func(f"⚠️ Fehler: {e}")
 
+
+async def cmd_bug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Startet den interaktiven Bug-Reporting-Prozess."""
+    user_id = update.effective_user.id
+    _bug_reports[user_id] = {"state": "WAITING_FOR_TITLE"}
+    await update.message.reply_text(
+        "📝 *Feedback & Bug-Reporting*\n\n"
+        "Schön, dass du helfen möchtest! Bitte gib als Erstes einen **kurzen, aussagekräftigen Titel** für dein Feedback ein:",
+        parse_mode="Markdown"
+    )
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Verarbeitet die Klicks auf die Inline-Buttons des setcourse-Assistenten."""
@@ -260,7 +286,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         fac_id = data.split(":")[1]
         try:
             courses = await raumzeit.get_courses_of_study(fac_id)
-            keyboard = [[InlineKeyboardButton(c["name"], callback_data=f"setc_deg:{c['name']}")] for c in courses]
+            # Auch hier: 'name' ist die ID
+            keyboard = [[InlineKeyboardButton(c["longName"], callback_data=f"setc_deg:{c['name']}")] for c in courses]
             keyboard.append([InlineKeyboardButton("⬅️ Zurück", callback_data="setc_more")])
             await query.edit_message_text(
                 "*Schritt 2 von 3:* Wähle deinen Studiengang:", 
@@ -333,6 +360,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(f"✅ Issue erstellt: `issues/active/{filename}`", parse_mode="Markdown")
         # Aus Cache entfernen um Speicher zu sparen
         _error_cache.pop(err_id, None)
+
+    elif data.startswith("bug_ctx:") or data == "bug_no_ctx":
+        ctx_val = "Kein Kontext" if data == "bug_no_ctx" else data.split(":", 1)[1]
+        _bug_reports[user_id]["context"] = ctx_val
+        _bug_reports[user_id]["state"] = "WAITING_FOR_COMMENT"
+        await query.edit_message_text(
+            f"✅ Kontext gespeichert: `{ctx_val}`\n\nBitte beschreibe nun dein Anliegen so detailliert wie möglich (Zusatztext):",
+            parse_mode="Markdown"
+        )
 
 
 async def cmd_mensa(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -430,6 +466,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not await db.check_rate_limit(user_id, limit):
         await update.message.reply_text(f"⏳ Du hast das Limit von {limit} Anfragen/Stunde erreicht.")
         return
+
+    # Bug-Reporting Workflow
+    if user_id in _bug_reports:
+        report = _bug_reports[user_id]
+        state = report.get("state")
+        
+        if state == "WAITING_FOR_TITLE":
+            report["title"] = text
+            report["state"] = "WAITING_FOR_CONTEXT"
+            # Letzte Befehle aus Historie holen
+            history = await db.load_history(chat_id)
+            user_cmds = list(dict.fromkeys([m["content"] for m in history if m["role"] == "user"])) # Deduplizieren
+            
+            keyboard = []
+            for cmd in user_cmds[-5:]: # Letzte 5
+                keyboard.append([InlineKeyboardButton(f"💬 {cmd[:30]}...", callback_data=f"bug_ctx:{cmd[:50]}")])
+            keyboard.append([InlineKeyboardButton("⏭ Kein Kontext", callback_data="bug_no_ctx")])
+            
+            await update.message.reply_text(
+                f"Titel: *{text}*\n\n*Schritt 2:* Welcher deiner letzten Befehle gehört zu diesem Problem?",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+            return
+            
+        elif state == "WAITING_FOR_COMMENT":
+            user_info = f"@{user.username}" if user.username else str(user_id)
+            filename = admin.save_user_issue(report["title"], report.get("context", "N/A"), text, user_info)
+            _bug_reports.pop(user_id)
+            await update.message.reply_text(
+                f"✅ *Vielen Dank!*\n\nDein Feedback wurde als Issue gespeichert:\n`issues/active/{filename}`",
+                parse_mode="Markdown"
+            )
+            return
 
     # Bestätigungsfrage auswerten (Eskalations-Logik)
     if chat_id in _pending_confirmation:
@@ -654,6 +724,7 @@ async def main_async() -> None:
     app = ApplicationBuilder().token(settings.telegram_bot_token).post_init(_post_init).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("bug", cmd_bug))
     app.add_handler(CommandHandler("mensa", cmd_mensa))
     app.add_handler(CommandHandler("setcourse", cmd_setcourse))
     app.add_handler(CommandHandler("reset", cmd_reset))
