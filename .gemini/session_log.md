@@ -149,7 +149,7 @@ Nach dem Datenbank-Refactoring wurde eine fehlende Funktion wiederhergestellt un
 - **Syntax**: `py_compile` für `db.py`, `bot.py` und `admin.py` erfolgreich.
 
 ### Git
-- Commit: (steht aus)
+- Commit: `b9f12b7`
 
 
 ## Task: Dekodierung von Mensa-Allergenen & Zusatzstoffen
