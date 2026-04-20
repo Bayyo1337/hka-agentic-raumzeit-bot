@@ -130,3 +130,25 @@ Die Verzögerung beim Shutdown wurde durch Einzelschritte mit Debug-Logs sichtba
 
 ### Git
 - Commit: `3ddba4b`
+
+# Session Log - 20.04.2026
+
+## Task: Mensa-Allergen-Abfrage (Fuzzy-Matching & Cache)
+Nutzer-Anfragen nach Allergenen (z. B. "Allergene zum Seelachs") schlugen fehl, wenn das LLM semantische IDs statt der von der API gelieferten UUIDs generiert hat. Zudem war der Cache flüchtig.
+
+### Changes
+- **src/tools.py**:
+    - `_MEALS_BY_NAME_CACHE` eingeführt zur Speicherung normierter Gerichtsnamen.
+    - `get_mensa_menu`: Füllt nun zusätzlich den Namens-Cache während der Menü-Abfrage.
+    - `get_mensa_meal_details`: Logik erweitert um Fuzzy-Matching (`difflib.get_close_matches`) gegen den Namens-Cache, falls die `meal_id` kein UUID-Match im Hauptcache ist.
+- **Repository**:
+    - Archivierung abgeschlossener Features/Specs nach `features/done/`.
+    - `README.md` grundlegend aktualisiert (Agentic Workflow & Admin-Features).
+
+### Validation
+- **Logic**: Repro-Skript `scripts/repro_mensa_allergene.py` verifiziert (löst nun semantische IDs wie `alaska_seelachs_gemueseragout` erfolgreich auf).
+- **Check**: `scripts/check_mensa_fix.py` bestätigt korrekte Rückgabe der Allergendaten.
+- **Syntax**: `uv run python -m py_compile src/tools.py` bestanden.
+
+### Git
+- Commit: (steht aus)
