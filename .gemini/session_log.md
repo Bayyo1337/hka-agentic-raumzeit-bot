@@ -133,29 +133,29 @@ Die Verzögerung beim Shutdown wurde durch Einzelschritte mit Debug-Logs sichtba
 
 # Session Log - 20.04.2026
 
-## Task: Mensa-Allergen-Abfrage (Persistente DB & Substring-Match)
-Nutzer-Anfragen nach Allergenen schlugen fehl, wenn der In-Memory Cache flüchtig war (z.B. nach Neustart) oder nur Teilnamen verwendet wurden.
+## Task: Datenbank-Refactoring (3-Säulen-Modell) & Robuste Mensa-IDs
+Das System wurde auf eine getrennte Datenbank-Architektur umgestellt, um Backup-Strategien und Performance zu verbessern. Zudem wurde die Mensa-Allergen-Abfrage gegen LLM-Halluzinationen gehärtet.
 
 ### Changes
 - **src/db.py**:
-    - Tabelle `mensa_meals` eingeführt (UUID, Name, JSON, Datum).
-    - `save_mensa_meals`, `get_mensa_meal_by_id` und `get_all_mensa_meals_for_fuzzy` implementiert.
-    - Automatischer Cleanup (> 14 Tage) in `init()`.
+    - Komplette Aufteilung in `state.db` (User/History), `cache.db` (API-Daten) und `telemetry.db` (Logs).
+    - Implementierung einer Migrations-Logik von der alten `bot.db`.
+    - Alle DB-Zugriffsfunktionen auf die jeweilige Ziel-Datenbank umgeleitet.
 - **src/tools.py**:
-    - `get_mensa_menu` persistiert nun alle Gerichte sofort in der DB.
-    - `get_mensa_meal_details` erweitert:
-        1. RAM-Lookup.
-        2. DB-UUID-Lookup.
-        3. DB-Substring-Lookup (normalisiert).
-        4. DB-Fuzzy-Lookup (difflib, cutoff 0.4).
+    - `get_mensa_meal_details`: Spezial-Fallback für halluzinierte IDs (Muster `kategorie_index`) mittels radikaler Normalisierung und DB-Lookup implementiert.
+    - `TOOL_DEFINITIONS`: Beschreibungen für Mensa-Tools geschärft, um LLM-Fehlverhalten vorzubeugen.
+- **Repository**:
+    - Spec `database-split.md` umgesetzt.
+    - Issue `allergen-abfrage.md` nach `issues/done/` verschoben.
 
 ### Validation
-- **Logic**: `scripts/repro_mensa_persistenz.py` zeigt Erfolg nach Cache-Flush.
-- **Search**: `scripts/test_mensa_db_fuzzy.py` bestätigt erfolgreichen Match von "schnitzel bar" gegen DB-Einträge.
-- **Syntax**: `py_compile` bestanden.
+- **DB-Split**: `scripts/check_db_split.py` bestätigte korrekte Tabellenverteilung auf 3 Dateien.
+- **ID-Guessing**: `scripts/repro_id_guessing.py` verifizierte erfolgreiche Auflösung von `gut_günstig_1` nach radikaler Normalisierung.
+- **Syntax**: `py_compile` für alle geänderten Dateien bestanden.
 
 ### Git
-- Commit: `8b84ec1`
+- Commit: (steht aus)
+
 
 ## Task: Dekodierung von Mensa-Allergenen & Zusatzstoffen
 Die Mensa-API liefert Allergene und Zusatzstoffe nur als technische Kürzel (z.B. WE, COLORANT). Diese wurden nun in lesbaren Klartext umgewandelt.
@@ -173,4 +173,4 @@ Die Mensa-API liefert Allergene und Zusatzstoffe nur als technische Kürzel (z.B
 - **Syntax**: `py_compile` bestanden.
 
 ### Git
-- Commit: (steht aus)
+- Commit: `18cc59c`
