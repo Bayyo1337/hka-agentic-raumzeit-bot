@@ -1,51 +1,47 @@
 """
 SQLite-Persistenz für Bot-Daten.
-Datei: data/bot.db (wird automatisch erstellt)
+Aufgeteilt in 3 Säulen: state.db (User), cache.db (API), telemetry.db (Logs).
 """
 
 import json
 import logging
 import os
+import shutil
 import aiosqlite
 from datetime import date, datetime, timedelta
 
 log = logging.getLogger(__name__)
 
-DB_PATH = os.environ.get("DB_PATH", "logs/bot.db")
+# Pfad-Konfiguration
+DB_DIR = os.environ.get("DB_DIR", "data")
+OLD_DB_PATH = os.environ.get("DB_PATH", "logs/bot.db") # Für Migration
+
+STATE_DB = os.path.join(DB_DIR, "state.db")
+CACHE_DB = os.path.join(DB_DIR, "cache.db")
+TELEMETRY_DB = os.path.join(DB_DIR, "telemetry.db")
 
 
 async def init() -> None:
-    """Erstellt Tabellen falls nicht vorhanden."""
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    async with aiosqlite.connect(DB_PATH) as db:
+    """Initialisiert alle 3 Datenbanken und führt Migrationen durch."""
+    os.makedirs(DB_DIR, exist_ok=True)
+
+    # 1. Migration von alter bot.db (falls vorhanden)
+    if os.path.exists(OLD_DB_PATH) and not os.path.exists(STATE_DB):
+        log.info("Migration: Alte Datenbank gefunden (%s). Kopiere nach %s...", OLD_DB_PATH, STATE_DB)
+        shutil.copy(OLD_DB_PATH, STATE_DB)
+        # Tabellen in state.db bereinigen (Caches/Logs entfernen, da sie in eigene DBs ziehen)
+        async with aiosqlite.connect(STATE_DB) as db:
+            await db.execute("DROP TABLE IF EXISTS requests")
+            await db.execute("DROP TABLE IF EXISTS course_index")
+            await db.execute("DROP TABLE IF EXISTS user_plan_cache")
+            await db.execute("DROP TABLE IF EXISTS mensa_meals")
+            await db.execute("DROP TABLE IF EXISTS test_cases")
+            await db.commit()
+        log.info("Migration abgeschlossen. Alte Daten wurden in state.db isoliert.")
+
+    # 2. STATE_DB (User, History, Tokens)
+    async with aiosqlite.connect(STATE_DB) as db:
         await db.executescript("""
-            CREATE TABLE IF NOT EXISTS requests (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id   INTEGER NOT NULL,
-                ts        TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_requests_user ON requests(user_id);
-
-            CREATE TABLE IF NOT EXISTS tokens (
-                user_id      INTEGER PRIMARY KEY,
-                input_total  INTEGER NOT NULL DEFAULT 0,
-                output_total INTEGER NOT NULL DEFAULT 0
-            );
-
-            CREATE TABLE IF NOT EXISTS histories (
-                chat_id  INTEGER PRIMARY KEY,
-                messages TEXT NOT NULL DEFAULT '[]'
-            );
-
-            CREATE TABLE IF NOT EXISTS course_index (
-                full_key      TEXT PRIMARY KEY,
-                abbreviation  TEXT NOT NULL,
-                semester      INTEGER NOT NULL,
-                group_letter  TEXT NOT NULL DEFAULT '',
-                discovered_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_course_abbr ON course_index(abbreviation, semester);
-
             CREATE TABLE IF NOT EXISTS users (
                 user_id           INTEGER PRIMARY KEY,
                 username          TEXT NOT NULL DEFAULT '',
@@ -55,17 +51,41 @@ async def init() -> None:
                 last_seen         TEXT NOT NULL DEFAULT '',
                 primary_course    TEXT
             );
+            CREATE TABLE IF NOT EXISTS tokens (
+                user_id      INTEGER PRIMARY KEY,
+                input_total  INTEGER NOT NULL DEFAULT 0,
+                output_total INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS histories (
+                chat_id  INTEGER PRIMARY KEY,
+                messages TEXT NOT NULL DEFAULT '[]'
+            );
+        """)
+        # Migration: Falls Spalten in state.db noch fehlen
+        try: await db.execute("ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0")
+        except: pass
+        try: await db.execute("ALTER TABLE users ADD COLUMN custom_rate_limit INTEGER NOT NULL DEFAULT -1")
+        except: pass
+        try: await db.execute("ALTER TABLE users ADD COLUMN primary_course TEXT")
+        except: pass
+        await db.commit()
+
+    # 3. CACHE_DB (Kurs-Index, Mensa, Plan-Cache)
+    async with aiosqlite.connect(CACHE_DB) as db:
+        await db.executescript("""
+            CREATE TABLE IF NOT EXISTS course_index (
+                full_key      TEXT PRIMARY KEY,
+                abbreviation  TEXT NOT NULL,
+                semester      INTEGER NOT NULL,
+                group_letter  TEXT NOT NULL DEFAULT '',
+                discovered_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_course_abbr ON course_index(abbreviation, semester);
 
             CREATE TABLE IF NOT EXISTS user_plan_cache (
                 user_id   INTEGER PRIMARY KEY,
                 plan_json TEXT NOT NULL,
                 cached_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS test_cases (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                query_text TEXT UNIQUE,
-                created_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS mensa_meals (
@@ -77,40 +97,41 @@ async def init() -> None:
             CREATE INDEX IF NOT EXISTS idx_mensa_date ON mensa_meals(date);
             CREATE INDEX IF NOT EXISTS idx_mensa_name ON mensa_meals(name);
         """)
-        # Schema-Migration: Falls die Spalten in users fehlen
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0")
-        except: pass
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN custom_rate_limit INTEGER NOT NULL DEFAULT -1")
-        except: pass
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN primary_course TEXT")
-        except: pass
-        
         # Cleanup: Alte Mensa-Einträge löschen (> 14 Tage)
         cutoff = (datetime.now() - timedelta(days=14)).date().isoformat()
         await db.execute("DELETE FROM mensa_meals WHERE date < ?", (cutoff,))
-
         await db.commit()
-    log.info("Datenbank initialisiert: %s", DB_PATH)
+
+    # 4. TELEMETRY_DB (Logs, Tests)
+    async with aiosqlite.connect(TELEMETRY_DB) as db:
+        await db.executescript("""
+            CREATE TABLE IF NOT EXISTS requests (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id   INTEGER NOT NULL,
+                ts        TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_requests_user ON requests(user_id);
+
+            CREATE TABLE IF NOT EXISTS test_cases (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                query_text TEXT UNIQUE,
+                created_at TEXT NOT NULL
+            );
+        """)
+        await db.commit()
+
+    log.info("Datenbanken initialisiert (Säulen-Modell): %s, %s, %s", STATE_DB, CACHE_DB, TELEMETRY_DB)
 
 
-# ── Rate Limiting ────────────────────────────────────────────────────────────
+# ── Rate Limiting (TELEMETRY_DB) ─────────────────────────────────────────────
 
 async def check_rate_limit(user_id: int, limit: int) -> bool:
-    """
-    True = Request erlaubt (und wird eingetragen).
-    False = Limit überschritten.
-    limit=0 → immer erlaubt.
-    """
     if limit == 0:
         await _log_request(user_id)
         return True
 
     cutoff = (datetime.now() - timedelta(hours=1)).isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
-        # Aktuelle Anzahl in der letzten Stunde
+    async with aiosqlite.connect(TELEMETRY_DB) as db:
         async with db.execute(
             "SELECT COUNT(*) FROM requests WHERE user_id=? AND ts>?",
             (user_id, cutoff),
@@ -124,7 +145,6 @@ async def check_rate_limit(user_id: int, limit: int) -> bool:
             "INSERT INTO requests (user_id, ts) VALUES (?, ?)",
             (user_id, datetime.now().isoformat()),
         )
-        # Alte Einträge aufräumen (älter als 2 Stunden)
         old_cutoff = (datetime.now() - timedelta(hours=2)).isoformat()
         await db.execute("DELETE FROM requests WHERE ts<?", (old_cutoff,))
         await db.commit()
@@ -132,7 +152,7 @@ async def check_rate_limit(user_id: int, limit: int) -> bool:
 
 
 async def _log_request(user_id: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(TELEMETRY_DB) as db:
         await db.execute(
             "INSERT INTO requests (user_id, ts) VALUES (?, ?)",
             (user_id, datetime.now().isoformat()),
@@ -142,7 +162,7 @@ async def _log_request(user_id: int) -> None:
 
 async def get_recent_count(user_id: int) -> int:
     cutoff = (datetime.now() - timedelta(hours=1)).isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(TELEMETRY_DB) as db:
         async with db.execute(
             "SELECT COUNT(*) FROM requests WHERE user_id=? AND ts>?",
             (user_id, cutoff),
@@ -152,7 +172,7 @@ async def get_recent_count(user_id: int) -> int:
 
 
 async def get_total_count(user_id: int) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(TELEMETRY_DB) as db:
         async with db.execute(
             "SELECT COUNT(*) FROM requests WHERE user_id=?",
             (user_id,),
@@ -162,9 +182,8 @@ async def get_total_count(user_id: int) -> int:
 
 
 async def get_oldest_recent_ts(user_id: int) -> datetime | None:
-    """Ältester Timestamp in der letzten Stunde (für Reset-Berechnung)."""
     cutoff = (datetime.now() - timedelta(hours=1)).isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(TELEMETRY_DB) as db:
         async with db.execute(
             "SELECT MIN(ts) FROM requests WHERE user_id=? AND ts>?",
             (user_id, cutoff),
@@ -176,16 +195,16 @@ async def get_oldest_recent_ts(user_id: int) -> datetime | None:
 
 
 async def get_all_user_ids() -> list[int]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(TELEMETRY_DB) as db:
         async with db.execute("SELECT DISTINCT user_id FROM requests") as cur:
             rows = await cur.fetchall()
     return [r[0] for r in rows]
 
 
-# ── Token-Tracking ───────────────────────────────────────────────────────────
+# ── Token-Tracking (STATE_DB) ────────────────────────────────────────────────
 
 async def add_tokens(user_id: int, input_tokens: int, output_tokens: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(STATE_DB) as db:
         await db.execute("""
             INSERT INTO tokens (user_id, input_total, output_total)
             VALUES (?, ?, ?)
@@ -197,7 +216,7 @@ async def add_tokens(user_id: int, input_tokens: int, output_tokens: int) -> Non
 
 
 async def get_tokens(user_id: int) -> tuple[int, int]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute(
             "SELECT input_total, output_total FROM tokens WHERE user_id=?",
             (user_id,),
@@ -207,17 +226,16 @@ async def get_tokens(user_id: int) -> tuple[int, int]:
 
 
 async def get_all_tokens() -> dict[int, tuple[int, int]]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute("SELECT user_id, input_total, output_total FROM tokens") as cur:
             rows = await cur.fetchall()
     return {r[0]: (r[1], r[2]) for r in rows}
 
 
-# ── Kurs-Index ───────────────────────────────────────────────────────────────
+# ── Kurs-Index (CACHE_DB) ────────────────────────────────────────────────────
 
 async def get_course_variants(abbreviation: str, semester: int) -> list[str]:
-    """Gibt alle bekannten full_keys für ein Kürzel+Semester zurück, z.B. ['MABB.7', 'MABB.7.A']."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(CACHE_DB) as db:
         async with db.execute(
             "SELECT full_key FROM course_index WHERE abbreviation=? AND semester=? ORDER BY full_key",
             (abbreviation, semester),
@@ -227,9 +245,8 @@ async def get_course_variants(abbreviation: str, semester: int) -> list[str]:
 
 
 async def save_course_index(entries: list[dict]) -> None:
-    """Bulk-Upsert für course_index. entries: [{'full_key', 'abbreviation', 'semester', 'group_letter'}]"""
     now = datetime.now().isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(CACHE_DB) as db:
         await db.executemany("""
             INSERT INTO course_index (full_key, abbreviation, semester, group_letter, discovered_at)
             VALUES (?, ?, ?, ?, ?)
@@ -239,9 +256,8 @@ async def save_course_index(entries: list[dict]) -> None:
 
 
 async def course_index_stale(max_age_days: int = 7) -> bool:
-    """True wenn der Index leer ist oder der älteste Eintrag älter als max_age_days Tage."""
     cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(CACHE_DB) as db:
         async with db.execute("SELECT MIN(discovered_at) FROM course_index") as cur:
             row = await cur.fetchone()
     if not row or not row[0]:
@@ -250,16 +266,16 @@ async def course_index_stale(max_age_days: int = 7) -> bool:
 
 
 async def get_course_index_count() -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(CACHE_DB) as db:
         async with db.execute("SELECT COUNT(*) FROM course_index") as cur:
             (count,) = await cur.fetchone()
     return count
 
 
-# ── Chat-History ─────────────────────────────────────────────────────────────
+# ── Chat-History (STATE_DB) ──────────────────────────────────────────────────
 
 async def load_history(chat_id: int) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute(
             "SELECT messages FROM histories WHERE chat_id=?",
             (chat_id,),
@@ -269,7 +285,7 @@ async def load_history(chat_id: int) -> list[dict]:
 
 
 async def save_history(chat_id: int, messages: list[dict]) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(STATE_DB) as db:
         await db.execute("""
             INSERT INTO histories (chat_id, messages) VALUES (?, ?)
             ON CONFLICT(chat_id) DO UPDATE SET messages = excluded.messages
@@ -278,7 +294,6 @@ async def save_history(chat_id: int, messages: list[dict]) -> None:
 
 
 async def save_feedback_log(chat_id: int, data: dict) -> str:
-    """Speichert eine Feedback-JSON-Datei für manuelle Nachbearbeitung."""
     os.makedirs("data/feedback", exist_ok=True)
     path = f"data/feedback/{date.today().isoformat()}_{chat_id}.json"
     with open(path, "w", encoding="utf-8") as f:
@@ -287,16 +302,15 @@ async def save_feedback_log(chat_id: int, data: dict) -> str:
 
 
 async def clear_history(chat_id: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(STATE_DB) as db:
         await db.execute("DELETE FROM histories WHERE chat_id=?", (chat_id,))
         await db.commit()
 
 
-# ── Nutzerverwaltung ─────────────────────────────────────────────────────────
+# ── Nutzerverwaltung (STATE_DB) ──────────────────────────────────────────────
 
 async def upsert_user(user_id: int, username: str, first_name: str) -> None:
-    """Legt Nutzerdaten an oder aktualisiert sie (bei jeder Nachricht)."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(STATE_DB) as db:
         await db.execute("""
             INSERT INTO users (user_id, username, first_name, last_seen)
             VALUES (?, ?, ?, ?)
@@ -309,7 +323,7 @@ async def upsert_user(user_id: int, username: str, first_name: str) -> None:
 
 
 async def get_all_users() -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute(
             "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen "
             "FROM users ORDER BY last_seen DESC"
@@ -323,7 +337,7 @@ async def get_all_users() -> list[dict]:
 
 
 async def get_user(user_id: int) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute(
             "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen "
             "FROM users WHERE user_id=?", (user_id,)
@@ -336,7 +350,7 @@ async def get_user(user_id: int) -> dict | None:
 
 
 async def find_user_by_username(username: str) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute(
             "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen "
             "FROM users WHERE LOWER(username)=LOWER(?)", (username.lstrip("@"),)
@@ -349,21 +363,20 @@ async def find_user_by_username(username: str) -> dict | None:
 
 
 async def set_banned(user_id: int, banned: bool) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(STATE_DB) as db:
         await db.execute("UPDATE users SET banned=? WHERE user_id=?", (int(banned), user_id))
         await db.commit()
 
 
 async def is_banned(user_id: int) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute("SELECT banned FROM users WHERE user_id=?", (user_id,)) as cur:
             row = await cur.fetchone()
     return bool(row[0]) if row else False
 
 
 async def set_custom_rate_limit(user_id: int, limit: int) -> None:
-    """-1 = globale Einstellung nutzen."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(STATE_DB) as db:
         await db.execute(
             "UPDATE users SET custom_rate_limit=? WHERE user_id=?", (limit, user_id)
         )
@@ -371,8 +384,7 @@ async def set_custom_rate_limit(user_id: int, limit: int) -> None:
 
 
 async def set_primary_course(user_id: int, course: str | None) -> None:
-    """Setzt den Haupt-Kurs für einen Nutzer (z.B. MABB.7)."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(STATE_DB) as db:
         await db.execute(
             "UPDATE users SET primary_course=? WHERE user_id=?", (course.upper() if course else None, user_id)
         )
@@ -380,9 +392,8 @@ async def set_primary_course(user_id: int, course: str | None) -> None:
 
 
 async def set_primary_courses(user_id: int, courses: list[str]) -> None:
-    """Setzt mehrere Kurse als JSON-Liste."""
     val = json.dumps(courses) if courses else None
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(STATE_DB) as db:
         await db.execute(
             "UPDATE users SET primary_course=? WHERE user_id=?", (val, user_id)
         )
@@ -390,7 +401,6 @@ async def set_primary_courses(user_id: int, courses: list[str]) -> None:
 
 
 async def add_primary_course(user_id: int, course: str) -> None:
-    """Fügt einen Kurs zur Liste hinzu (verhindert Duplikate)."""
     u = await get_user(user_id)
     raw = u.get("primary_course") if u else None
     try:
@@ -404,10 +414,11 @@ async def add_primary_course(user_id: int, course: str) -> None:
         await set_primary_courses(user_id, courses)
 
 
+# ── Cache-Extras (CACHE_DB) ──────────────────────────────────────────────────
+
 async def get_user_plan_cache(user_id: int, max_age_hours: int = 4) -> dict | None:
-    """Gibt den Plan aus dem Cache zurück, wenn er nicht zu alt ist."""
     cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(CACHE_DB) as db:
         async with db.execute(
             "SELECT plan_json FROM user_plan_cache WHERE user_id=? AND cached_at>?",
             (user_id, cutoff),
@@ -417,9 +428,8 @@ async def get_user_plan_cache(user_id: int, max_age_hours: int = 4) -> dict | No
 
 
 async def save_user_plan_cache(user_id: int, plan_data: dict) -> None:
-    """Speichert einen Plan im Cache."""
     now = datetime.now().isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(CACHE_DB) as db:
         await db.execute("""
             INSERT INTO user_plan_cache (user_id, plan_json, cached_at)
             VALUES (?, ?, ?)
@@ -430,34 +440,8 @@ async def save_user_plan_cache(user_id: int, plan_data: dict) -> None:
         await db.commit()
 
 
-async def get_custom_rate_limit(user_id: int) -> int:
-    """-1 = kein Override (globale Einstellung nutzen)."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT custom_rate_limit FROM users WHERE user_id=?", (user_id,)
-        ) as cur:
-            row = await cur.fetchone()
-    return row[0] if row else -1
-
-
-async def reset_user_requests(user_id: int) -> None:
-    """Löscht alle Rate-Limit-Einträge für diesen Nutzer (setzt Zähler zurück)."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM requests WHERE user_id=?", (user_id,))
-        await db.commit()
-
-
-async def clear_user_tokens(user_id: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM tokens WHERE user_id=?", (user_id,))
-        await db.commit()
-
-
-# ── Kurs-Index Extras ─────────────────────────────────────────────────────────
-
 async def get_course_index_age() -> datetime | None:
-    """Zeitpunkt des letzten Index-Aufbaus."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(CACHE_DB) as db:
         async with db.execute("SELECT MAX(discovered_at) FROM course_index") as cur:
             row = await cur.fetchone()
     if row and row[0]:
@@ -466,8 +450,7 @@ async def get_course_index_age() -> datetime | None:
 
 
 async def get_course_keys_for_abbr(abbreviation: str) -> list[str]:
-    """Alle bekannten Keys für ein Kürzel, z.B. 'MABB' → ['MABB.6', 'MABB.6.A', ...]"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(CACHE_DB) as db:
         async with db.execute(
             "SELECT full_key FROM course_index WHERE abbreviation=? ORDER BY semester, group_letter",
             (abbreviation.upper(),)
@@ -476,54 +459,10 @@ async def get_course_keys_for_abbr(abbreviation: str) -> list[str]:
     return [r[0] for r in rows]
 
 
-# ── Feedback-Logs ─────────────────────────────────────────────────────────────
-
-def list_feedback_logs() -> list[str]:
-    """Gibt Dateinamen aller Feedback-Logs zurück."""
-    path = "data/feedback"
-    if not os.path.isdir(path):
-        return []
-    return sorted(f for f in os.listdir(path) if f.endswith(".json"))
-
-
-def delete_feedback_log(filename: str) -> bool:
-    """Löscht eine einzelne Feedback-Datei. Gibt False zurück wenn nicht gefunden."""
-    path = os.path.join("data/feedback", os.path.basename(filename))
-    if os.path.isfile(path):
-        os.remove(path)
-        return True
-    return False
-
-
-# ── Stresstest / Regressionstests ────────────────────────────────────────────
-
-async def save_test_case(query: str) -> bool:
-    """Speichert eine Test-Anfrage, falls sie noch nicht existiert."""
-    now = datetime.now().isoformat()
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(
-                "INSERT INTO test_cases (query_text, created_at) VALUES (?, ?)",
-                (query, now)
-            )
-            await db.commit()
-        return True
-    except aiosqlite.IntegrityError:
-        return False # Duplikat
-
-
-async def get_all_test_cases() -> list[str]:
-    """Gibt alle gespeicherten Test-Anfragen zurück."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT query_text FROM test_cases ORDER BY id DESC") as cur:
-            rows = await cur.fetchall()
-            return [r[0] for r in rows]
-
-# ── Mensa-Cache ──────────────────────────────────────────────────────────────
+# ── Mensa-Cache (CACHE_DB) ───────────────────────────────────────────────────
 
 async def save_mensa_meals(meals: list[dict]) -> None:
-    """Speichert Gerichte in der DB."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(CACHE_DB) as db:
         await db.executemany("""
             INSERT INTO mensa_meals (meal_id, name, meal_json, date)
             VALUES (?, ?, ?, ?)
@@ -536,8 +475,7 @@ async def save_mensa_meals(meals: list[dict]) -> None:
 
 
 async def get_mensa_meal_by_id(meal_id: str) -> dict | None:
-    """Sucht ein Gericht nach seiner UUID in der DB."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(CACHE_DB) as db:
         async with db.execute(
             "SELECT meal_json FROM mensa_meals WHERE meal_id=?", (meal_id,)
         ) as cur:
@@ -546,12 +484,57 @@ async def get_mensa_meal_by_id(meal_id: str) -> dict | None:
 
 
 async def get_all_mensa_meals_for_fuzzy() -> dict[str, str]:
-    """Gibt alle bekannten Gerichtsnamen -> meal_id zurück (für Fuzzy-Matching)."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        # Wir begrenzen auf die letzten 3 Tage, um den Suchraum klein und aktuell zu halten
+    async with aiosqlite.connect(CACHE_DB) as db:
         cutoff = (datetime.now() - timedelta(days=3)).date().isoformat()
         async with db.execute(
             "SELECT name, meal_id FROM mensa_meals WHERE date >= ?", (cutoff,)
         ) as cur:
             rows = await cur.fetchall()
     return {r[0]: r[1] for r in rows}
+
+
+async def get_mensa_meals_for_day(date_str: str) -> list[dict]:
+    """Gibt alle Gerichte eines bestimmten Tages zurück (für Kategorie-Lookup)."""
+    async with aiosqlite.connect(CACHE_DB) as db:
+        async with db.execute(
+            "SELECT meal_json FROM mensa_meals WHERE date=?", (date_str,)
+        ) as cur:
+            rows = await cur.fetchall()
+    return [json.loads(r[0]) for r in rows]
+
+
+# ── Telemetrie & Feedback (TELEMETRY_DB) ─────────────────────────────────────
+
+async def save_test_case(query: str) -> bool:
+    now = datetime.now().isoformat()
+    try:
+        async with aiosqlite.connect(TELEMETRY_DB) as db:
+            await db.execute(
+                "INSERT INTO test_cases (query_text, created_at) VALUES (?, ?)",
+                (query, now)
+            )
+            await db.commit()
+        return True
+    except aiosqlite.IntegrityError:
+        return False
+
+
+async def get_all_test_cases() -> list[str]:
+    async with aiosqlite.connect(TELEMETRY_DB) as db:
+        async with db.execute("SELECT query_text FROM test_cases ORDER BY id DESC") as cur:
+            rows = await cur.fetchall()
+            return [r[0] for r in rows]
+
+
+def list_feedback_logs() -> list[str]:
+    path = "data/feedback"
+    if not os.path.isdir(path): return []
+    return sorted(f for f in os.listdir(path) if f.endswith(".json"))
+
+
+def delete_feedback_log(filename: str) -> bool:
+    path = os.path.join("data/feedback", os.path.basename(filename))
+    if os.path.isfile(path):
+        os.remove(path)
+        return True
+    return False

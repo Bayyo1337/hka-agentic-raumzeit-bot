@@ -1150,7 +1150,29 @@ async def get_mensa_meal_details(meal_id: str) -> dict:
     except Exception as e:
         log.warning("Mensa-DB: Fehler bei ID-Lookup: %s", e)
 
-    # 3. Falls kein UUID Match: Versuche Name-Lookup (Robustheit für LLM-Halluzinationen)
+    # 3. Spezial-Fallback für LLM-Halluzinationen (Muster: kategorie_index, z.B. gut_günstig_1)
+    import re
+    if (pattern_match := re.match(r'^(.+)_([0-9]+)$', meal_id)):
+        try:
+            def _norm_radical(s):
+                return re.sub(r'[^a-z0-9]', '', s.lower().replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss"))
+
+            cat_query = _norm_radical(pattern_match.group(1))
+            idx = int(pattern_match.group(2)) - 1 # 1-based to 0-based
+            
+            # Lade alle Gerichte von heute
+            today_meals = await db.get_mensa_meals_for_day(_date.today().isoformat())
+            if today_meals:
+                # Filtere nach Kategorie (radikal normalisiert)
+                cat_meals = [m for m in today_meals if cat_query in _norm_radical(m.get("line", {}).get("name", ""))]
+                if 0 <= idx < len(cat_meals):
+                    target = cat_meals[idx]
+                    log.info("Mensa-Detail: Pattern-Match für '%s' -> '%s' (ID: %s)", meal_id, target["name"], target["id"])
+                    return target
+        except Exception as e:
+            log.warning("Mensa-DB: Fehler bei Pattern-Lookup: %s", e)
+
+    # 4. Falls kein UUID Match: Versuche Name-Lookup (Robustheit für LLM-Halluzinationen)
     # Erst im RAM-Namenscache suchen
     import difflib
     q_norm = _norm(meal_id)
@@ -1293,11 +1315,11 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_mensa_meal_details",
-            "description": "Gibt Details (Zusatzstoffe, Allergene) zu einem Gericht zurück.",
+            "description": "Gibt Details (Zusatzstoffe, Allergene) zu einem Gericht zurück. WICHTIG: Nutze die UUID aus get_mensa_menu ODER den vollständigen Namen des Gerichts (z.B. 'Seelachs'). Rate niemals IDs wie 'gut_guenstig_1'!",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "meal_id": {"type": "string", "description": "Die technische ID des Gerichts aus get_mensa_menu."}
+                    "meal_id": {"type": "string", "description": "Die UUID oder der Name des Gerichts."}
                 },
                 "required": ["meal_id"]
             }
