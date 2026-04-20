@@ -1096,6 +1096,12 @@ async def get_mensa_menu(canteen: str | None = None, date: str | None = None) ->
             if not flattened_meals:
                  return {"canteen": c_name, "date": date, "closed": True, "meals": []}
             
+            # Persistenz
+            try:
+                await db.save_mensa_meals(flattened_meals)
+            except Exception as e:
+                log.warning("Mensa-DB: Fehler beim Speichern: %s", e)
+            
             return {"canteen": c_name, "date": date, "closed": False, "meals": flattened_meals}
     except Exception as e:
         log.error("Mensa-API Fehler: %s", e)
@@ -1109,28 +1115,48 @@ async def _fetch_canteens_raw():
 
 async def get_mensa_meal_details(meal_id: str) -> dict:
     """Holt Allergene und Zusatzstoffe für ein spezifisches Gericht."""
-    # 1. Aus Cache versuchen (UUID Match)
+    # 1. Aus RAM-Cache versuchen (schnellster Weg)
     if meal_id in _MEALS_CACHE:
         return _MEALS_CACHE[meal_id]
         
-    # 2. Falls kein UUID Match: Versuche Name-Lookup (Robustheit für LLM-Halluzinationen)
-    # Das LLM schickt oft Teile des Namen als ID
+    # 2. Aus Datenbank versuchen (UUID Match)
+    try:
+        if (db_meal := await db.get_mensa_meal_by_id(meal_id)):
+            _MEALS_CACHE[meal_id] = db_meal # In RAM-Cache für nächsten Zugriff
+            return db_meal
+    except Exception as e:
+        log.warning("Mensa-DB: Fehler bei ID-Lookup: %s", e)
+
+    # 3. Falls kein UUID Match: Versuche Name-Lookup (Robustheit für LLM-Halluzinationen)
+    # Erst im RAM-Namenscache suchen
     import difflib
     q_norm = _norm(meal_id)
-    
-    # Exakter Match im Namens-Cache?
     if q_norm in _MEALS_BY_NAME_CACHE:
-        return _MEALS_CACHE[_MEALS_BY_NAME_CACHE[q_norm]]
+        return await get_mensa_meal_details(_MEALS_BY_NAME_CACHE[q_norm])
     
-    # Fuzzy Match über alle bekannten Namen
-    matches = difflib.get_close_matches(q_norm, _MEALS_BY_NAME_CACHE.keys(), n=1, cutoff=0.6)
-    if matches:
-        target_id = _MEALS_BY_NAME_CACHE[matches[0]]
-        log.info("Mensa-Detail: Name-Match für '%s' -> '%s' (ID: %s)", meal_id, matches[0], target_id)
-        return _MEALS_CACHE[target_id]
+    # Dann Fuzzy Match über alle bekannten Namen aus der DB
+    try:
+        all_names = await db.get_all_mensa_meals_for_fuzzy()
+        # all_names ist {Name: ID}
+        norm_to_id = {_norm(name): mid for name, mid in all_names.items()}
+        
+        # A. Erst exakter Teilstring-Match (beliebt bei Nutzern)
+        for norm_name, mid in norm_to_id.items():
+            if q_norm in norm_name:
+                log.info("Mensa-Detail: DB-Substring-Match für '%s' -> '%s' (ID: %s)", meal_id, norm_name, mid)
+                return await get_mensa_meal_details(mid)
+        
+        # B. Dann Fuzzy Match (bei Tippfehlern)
+        matches = difflib.get_close_matches(q_norm, norm_to_id.keys(), n=1, cutoff=0.4)
+        if matches:
+            target_id = norm_to_id[matches[0]]
+            log.info("Mensa-Detail: DB-Fuzzy-Match für '%s' -> '%s' (ID: %s)", meal_id, matches[0], target_id)
+            return await get_mensa_meal_details(target_id)
+    except Exception as e:
+        log.warning("Mensa-DB: Fehler bei Fuzzy-Lookup: %s", e)
 
-    # 3. API Fallback (benötigt leider lineId und date im neuen Schema)
-    return {"error": "Gerichts-Details aktuell nur direkt nach der Speiseplan-Abfrage verfügbar."}
+    # 4. Finaler Fehlerfall
+    return {"error": "Gerichts-Details aktuell nicht verfügbar. Bitte rufe erst das Mensa-Menü mit /mensa ab."}
 
 
 # ---------------------------------------------------------------------------

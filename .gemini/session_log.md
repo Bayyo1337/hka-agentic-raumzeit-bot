@@ -133,22 +133,26 @@ Die Verzögerung beim Shutdown wurde durch Einzelschritte mit Debug-Logs sichtba
 
 # Session Log - 20.04.2026
 
-## Task: Mensa-Allergen-Abfrage (Fuzzy-Matching & Cache)
-Nutzer-Anfragen nach Allergenen (z. B. "Allergene zum Seelachs") schlugen fehl, wenn das LLM semantische IDs statt der von der API gelieferten UUIDs generiert hat. Zudem war der Cache flüchtig.
+## Task: Mensa-Allergen-Abfrage (Persistente DB & Substring-Match)
+Nutzer-Anfragen nach Allergenen schlugen fehl, wenn der In-Memory Cache flüchtig war (z.B. nach Neustart) oder nur Teilnamen verwendet wurden.
 
 ### Changes
+- **src/db.py**:
+    - Tabelle `mensa_meals` eingeführt (UUID, Name, JSON, Datum).
+    - `save_mensa_meals`, `get_mensa_meal_by_id` und `get_all_mensa_meals_for_fuzzy` implementiert.
+    - Automatischer Cleanup (> 14 Tage) in `init()`.
 - **src/tools.py**:
-    - `_MEALS_BY_NAME_CACHE` eingeführt zur Speicherung normierter Gerichtsnamen.
-    - `get_mensa_menu`: Füllt nun zusätzlich den Namens-Cache während der Menü-Abfrage.
-    - `get_mensa_meal_details`: Logik erweitert um Fuzzy-Matching (`difflib.get_close_matches`) gegen den Namens-Cache, falls die `meal_id` kein UUID-Match im Hauptcache ist.
-- **Repository**:
-    - Archivierung abgeschlossener Features/Specs nach `features/done/`.
-    - `README.md` grundlegend aktualisiert (Agentic Workflow & Admin-Features).
+    - `get_mensa_menu` persistiert nun alle Gerichte sofort in der DB.
+    - `get_mensa_meal_details` erweitert:
+        1. RAM-Lookup.
+        2. DB-UUID-Lookup.
+        3. DB-Substring-Lookup (normalisiert).
+        4. DB-Fuzzy-Lookup (difflib, cutoff 0.4).
 
 ### Validation
-- **Logic**: Repro-Skript `scripts/repro_mensa_allergene.py` verifiziert (löst nun semantische IDs wie `alaska_seelachs_gemueseragout` erfolgreich auf).
-- **Check**: `scripts/check_mensa_fix.py` bestätigt korrekte Rückgabe der Allergendaten.
-- **Syntax**: `uv run python -m py_compile src/tools.py` bestanden.
+- **Logic**: `scripts/repro_mensa_persistenz.py` zeigt Erfolg nach Cache-Flush.
+- **Search**: `scripts/test_mensa_db_fuzzy.py` bestätigt erfolgreichen Match von "schnitzel bar" gegen DB-Einträge.
+- **Syntax**: `py_compile` bestanden.
 
 ### Git
 - Commit: (steht aus)
