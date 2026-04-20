@@ -91,6 +91,7 @@ _JA   = {"ja", "j", "yes", "y", "stimmt", "korrekt", "ok", "okay"}
 _USER_COMMANDS = [
     BotCommand("start", "Einführung & Kurzhilfe"),
     BotCommand("help", "Ausführliche Hilfe & Beispiele"),
+    BotCommand("mensa", "Aktueller Speiseplan der Mensa Moltke"),
     BotCommand("myplan", "Dein persönlicher Stundenplan"),
     BotCommand("setcourse", "Eigener Studiengang hinterlegen"),
     BotCommand("stats", "Nutzungsstatistik & Profil"),
@@ -128,6 +129,7 @@ def _command_help(is_admin: bool) -> str:
     lines += [
         "📜 *Befehle:*",
         "/help – Diese ausführliche Hilfe",
+        "/mensa – Aktueller Speiseplan (Moltke)",
         "/stats – Deine Tokens, Limits und gespeicherten Kurse",
         "/reset – Löscht den aktuellen Gesprächskontext",
     ]
@@ -331,6 +333,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(f"✅ Issue erstellt: `issues/active/{filename}`", parse_mode="Markdown")
         # Aus Cache entfernen um Speicher zu sparen
         _error_cache.pop(err_id, None)
+
+
+async def cmd_mensa(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Shortcut-Befehl für den heutigen Mensa-Speiseplan."""
+    user_id = update.effective_user.id
+    if not _is_allowed(user_id): return
+    
+    msg = await update.message.reply_text("🔄 Rufe Speiseplan ab...")
+    try:
+        # Default: Moltke, Heute
+        result = await raumzeit.get_mensa_menu()
+        reply = formatter.format_results([("get_mensa_menu", result)], "/mensa")
+        await msg.edit_text(reply, parse_mode="Markdown")
+    except Exception as exc:
+        log.exception("Fehler in cmd_mensa")
+        await msg.edit_text(f"⚠️ Fehler beim Abrufen des Speiseplans: {exc}")
 
 
 async def cmd_myplan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -636,6 +654,7 @@ async def main_async() -> None:
     app = ApplicationBuilder().token(settings.telegram_bot_token).post_init(_post_init).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("mensa", cmd_mensa))
     app.add_handler(CommandHandler("setcourse", cmd_setcourse))
     app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CommandHandler("stats", cmd_stats))
