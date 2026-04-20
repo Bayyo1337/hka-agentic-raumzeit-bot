@@ -133,25 +133,20 @@ Die Verzögerung beim Shutdown wurde durch Einzelschritte mit Debug-Logs sichtba
 
 # Session Log - 20.04.2026
 
-## Task: Datenbank-Refactoring (3-Säulen-Modell) & Robuste Mensa-IDs
-Das System wurde auf eine getrennte Datenbank-Architektur umgestellt, um Backup-Strategien und Performance zu verbessern. Zudem wurde die Mensa-Allergen-Abfrage gegen LLM-Halluzinationen gehärtet.
+## Task: Fix DB-Regression & Robustes Error-Handling
+Nach dem Datenbank-Refactoring wurde eine fehlende Funktion wiederhergestellt und das Error-Reporting-System für Admins gegen Sonderzeichen (Markdown) gehärtet. Zudem wurde die Dateibenennung für Issues optimiert.
 
 ### Changes
 - **src/db.py**:
-    - Komplette Aufteilung in `state.db` (User/History), `cache.db` (API-Daten) und `telemetry.db` (Logs).
-    - Implementierung einer Migrations-Logik von der alten `bot.db`.
-    - Alle DB-Zugriffsfunktionen auf die jeweilige Ziel-Datenbank umgeleitet.
-- **src/tools.py**:
-    - `get_mensa_meal_details`: Spezial-Fallback für halluzinierte IDs (Muster `kategorie_index`) mittels radikaler Normalisierung und DB-Lookup implementiert.
-    - `TOOL_DEFINITIONS`: Beschreibungen für Mensa-Tools geschärft, um LLM-Fehlverhalten vorzubeugen.
-- **Repository**:
-    - Spec `database-split.md` umgesetzt.
-    - Issue `allergen-abfrage.md` nach `issues/done/` verschoben.
+    - Funktion `get_custom_rate_limit` wiederhergestellt (nutzt `STATE_DB`).
+- **src/bot.py**:
+    - `escape_markdown` importiert und konsequent im `_error_handler` auf `user_info`, `user_input` und `error_msg` angewendet.
+- **src/admin.py**:
+    - `save_issue_from_log` verbessert: Dateinamen enthalten nun den Fehlertyp (z.B. `attributeerror-...`) für bessere Triage.
 
 ### Validation
-- **DB-Split**: `scripts/check_db_split.py` bestätigte korrekte Tabellenverteilung auf 3 Dateien.
-- **ID-Guessing**: `scripts/repro_id_guessing.py` verifizierte erfolgreiche Auflösung von `gut_günstig_1` nach radikaler Normalisierung.
-- **Syntax**: `py_compile` für alle geänderten Dateien bestanden.
+- **Regression**: `scripts/repro_error_issues.py` bestätigte die Verfügbarkeit von `get_custom_rate_limit` und korrektes Markdown-Escaping.
+- **Syntax**: `py_compile` für `db.py`, `bot.py` und `admin.py` erfolgreich.
 
 ### Git
 - Commit: (steht aus)

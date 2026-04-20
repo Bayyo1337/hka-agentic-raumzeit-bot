@@ -442,10 +442,16 @@ def save_issue_from_log(data: dict) -> str:
     traceback = data.get("traceback", "No traceback available")
     user_info = data.get("user_info", "Unknown User")
 
-    # Prägnanter Dateiname
+    # Prägnanter Dateiname (inkl. Fehler-Typ falls möglich)
+    error_type = "error"
+    if ":" in error_msg:
+        potential_type = error_msg.split(":")[0].strip()
+        if " " not in potential_type: # Wahrscheinlich ein Python-Error-Typ
+            error_type = potential_type.lower()
+
     clean_msg = re.sub(r'[^a-z0-9]', '-', error_msg.lower())
     clean_msg = re.sub(r'-+', '-', clean_msg).strip("-")
-    filename = f"error-{clean_msg[:30]}-{now.strftime('%y%m%d-%H%M%S')}.md"
+    filename = f"{error_type}-{clean_msg[:30]}-{now.strftime('%y%m%d-%H%M%S')}.md"
     
     path = os.path.join("issues", "active", filename)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -477,16 +483,3 @@ def save_issue_from_log(data: dict) -> str:
         
     return filename
 
-@_require_admin
-async def cmd_togglepersonal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    from src.state import _personal_features
-    _personal_features[0] = not _personal_features[0]
-    status = "AKTIVIERT" if _personal_features[0] else "DEAKTIVIERT"
-    await update.message.reply_text(f"✨ Persönliche Stundenpläne wurden {status}.")
-
-@_require_admin
-async def cmd_togglemap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    from src.state import _map_feature
-    _map_feature[0] = not _map_feature[0]
-    status = "AKTIVIERT" if _map_feature[0] else "DEAKTIVIERT"
-    await update.message.reply_text(f"📍 Lageplan-Anzeige wurde {status}.")

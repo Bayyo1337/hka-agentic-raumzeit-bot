@@ -16,6 +16,7 @@ from logging.handlers import RotatingFileHandler
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import NetworkError
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
+from telegram.helpers import escape_markdown
 
 from src.config import settings
 from src import agent
@@ -605,7 +606,12 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
                 keyboard = [[InlineKeyboardButton("📝 Issue erstellen", callback_data=f"err_save:{err_id}")]]
                 await context.bot.send_message(
                     chat_id=aid,
-                    text=f"🚨 *Bot-Fehler*\nUser: {user_info}\nInput: `{user_input}`\n\nError: `{error_msg}`",
+                    text=(
+                        f"🚨 *Bot-Fehler*\n"
+                        f"User: {escape_markdown(user_info)}\n"
+                        f"Input: `{escape_markdown(user_input)}`\n\n"
+                        f"Error: `{escape_markdown(error_msg)}`"
+                    ),
                     reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode="Markdown"
                 )

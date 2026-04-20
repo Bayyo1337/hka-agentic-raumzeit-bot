@@ -62,12 +62,18 @@ async def init() -> None:
             );
         """)
         # Migration: Falls Spalten in state.db noch fehlen
-        try: await db.execute("ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0")
-        except: pass
-        try: await db.execute("ALTER TABLE users ADD COLUMN custom_rate_limit INTEGER NOT NULL DEFAULT -1")
-        except: pass
-        try: await db.execute("ALTER TABLE users ADD COLUMN primary_course TEXT")
-        except: pass
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN custom_rate_limit INTEGER NOT NULL DEFAULT -1")
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN primary_course TEXT")
+        except Exception:
+            pass
         await db.commit()
 
     # 3. CACHE_DB (Kurs-Index, Mensa, Plan-Cache)
@@ -383,6 +389,16 @@ async def set_custom_rate_limit(user_id: int, limit: int) -> None:
         await db.commit()
 
 
+async def get_custom_rate_limit(user_id: int) -> int:
+    """-1 = kein Override (globale Einstellung nutzen)."""
+    async with aiosqlite.connect(STATE_DB) as db:
+        async with db.execute(
+            "SELECT custom_rate_limit FROM users WHERE user_id=?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+    return row[0] if row else -1
+
+
 async def set_primary_course(user_id: int, course: str | None) -> None:
     async with aiosqlite.connect(STATE_DB) as db:
         await db.execute(
@@ -405,8 +421,9 @@ async def add_primary_course(user_id: int, course: str) -> None:
     raw = u.get("primary_course") if u else None
     try:
         courses = json.loads(raw) if raw else []
-        if not isinstance(courses, list): courses = [str(raw)]
-    except:
+        if not isinstance(courses, list):
+            courses = [str(raw)]
+    except Exception:
         courses = [raw] if raw else []
     
     if course.upper() not in [c.upper() for c in courses]:
