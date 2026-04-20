@@ -133,23 +133,23 @@ Die Verzögerung beim Shutdown wurde durch Einzelschritte mit Debug-Logs sichtba
 
 # Session Log - 20.04.2026
 
-## Task: Fix DB-Regression & Robustes Error-Handling
-Nach dem Datenbank-Refactoring wurde eine fehlende Funktion wiederhergestellt und das Error-Reporting-System für Admins gegen Sonderzeichen (Markdown) gehärtet. Zudem wurde die Dateibenennung für Issues optimiert.
+## Task: /mensa Command Shortcut & Text-Fix
+Nutzer waren verwirrt über einen Hinweistext, der auf einen nicht existierenden `/mensa` Befehl verwies. Zudem fehlte dieser intuitiv erwartete Shortcut.
 
 ### Changes
-- **src/db.py**:
-    - Funktion `get_custom_rate_limit` wiederhergestellt (nutzt `STATE_DB`).
+- **src/tools.py**:
+    - Hinweistext in `get_mensa_meal_details` korrigiert (Verweis auf `/mensa` entfernt).
 - **src/bot.py**:
-    - `escape_markdown` importiert und konsequent im `_error_handler` auf `user_info`, `user_input` und `error_msg` angewendet.
-- **src/admin.py**:
-    - `save_issue_from_log` verbessert: Dateinamen enthalten nun den Fehlertyp (z.B. `attributeerror-...`) für bessere Triage.
+    - `cmd_mensa` Handler implementiert: Ruft standardmäßig das heutige Menü der Mensa Moltke ab.
+    - `/mensa` in `_USER_COMMANDS` und `/help` integriert.
+    - Command in `main_async` registriert.
 
 ### Validation
-- **Regression**: `scripts/repro_error_issues.py` bestätigte die Verfügbarkeit von `get_custom_rate_limit` und korrektes Markdown-Escaping.
-- **Syntax**: `py_compile` für `db.py`, `bot.py` und `admin.py` erfolgreich.
+- **Text-Check**: `scripts/repro_mensa_command.py` bestätigte die neue neutrale Fehlermeldung.
+- **Bot-Start**: `py_compile` erfolgreich für alle geänderten Dateien.
 
 ### Git
-- Commit: `b9f12b7`
+- Commit: (steht aus)
 
 
 ## Task: Dekodierung von Mensa-Allergenen & Zusatzstoffen

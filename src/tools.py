@@ -1201,7 +1201,7 @@ async def get_mensa_meal_details(meal_id: str) -> dict:
         log.warning("Mensa-DB: Fehler bei Fuzzy-Lookup: %s", e)
 
     # 4. Finaler Fehlerfall
-    return {"error": "Gerichts-Details aktuell nicht verfügbar. Bitte rufe erst das Mensa-Menü mit /mensa ab."}
+    return {"error": "Gerichts-Details aktuell nicht verfügbar. Bitte frage erst nach dem Mensa-Menü."}
 
 
 # ---------------------------------------------------------------------------

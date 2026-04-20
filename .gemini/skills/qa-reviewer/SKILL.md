@@ -20,7 +20,7 @@ Führe das gesamte Test-Set aus, um sicherzustellen, dass keine Regressionen ent
 - `make check` oder `make test` (falls vorhanden).
 - Führe das `scripts/repro_issue.py` ein letztes Mal aus.
 - Prüfe auf Linting-Fehler: `uv run ruff check .`.
-- **Bot-Start Validierung:** Führe `make run` aus. Beobachte, ob der Bot fehlerfrei initialisiert und das Dashboard startet. Falls der Prozess mit einem Fehler (Crash) abbricht: Aktiviere sofort den `issue-planner` Skill, um den Traceback zu analysieren und einen neuen Plan in `.gemini/prompts/problem.md` zu erstellen. Committe in diesem Fall keinesfalls fehlerhaften Code.
+- **Bot-Start Validierung:** Führe `make run` aus. Beobachte, ob der Bot fehlerfrei initialisiert und das Dashboard startet. Beende den Bot anschließend sauber durch Eingabe von `exit` im Terminal-Prompt (nicht mit Ctrl+C), um die Shutdown-Logik zu prüfen. Falls der Prozess mit einem Fehler (Crash) abbricht: Aktiviere sofort den `issue-planner` Skill, um den Traceback zu analysieren und einen neuen Plan in `.gemini/prompts/problem.md` zu erstellen. Committe in diesem Fall keinesfalls fehlerhaften Code.
 
 ### 3. Git-Commit
 Wenn alle Prüfungen erfolgreich sind:
