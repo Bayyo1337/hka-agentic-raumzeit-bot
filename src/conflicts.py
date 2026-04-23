@@ -48,6 +48,28 @@ async def find_timetable_conflicts(course_abbr: str, base_sem: int, target_sem: 
     base_events = [e for e in base_events if e.get("date") in dates_to_check]
     target_events = [e for e in target_events if e.get("date") in dates_to_check]
 
+    def deduplicate_events(events):
+        unique = {}
+        for ev in events:
+            key = (ev.get("name"), ev.get("room"), ev.get("date"), ev.get("start"), ev.get("end"))
+            if key not in unique:
+                ev_copy = dict(ev)
+                if ev_copy.get("gruppe"):
+                    ev_copy["gruppen"] = [ev_copy["gruppe"]]
+                else:
+                    ev_copy["gruppen"] = []
+                unique[key] = ev_copy
+            else:
+                if ev.get("gruppe") and ev.get("gruppe") not in unique[key]["gruppen"]:
+                    unique[key]["gruppen"].append(ev["gruppe"])
+        for ev in unique.values():
+            if ev["gruppen"]:
+                ev["gruppe"] = ", ".join(ev["gruppen"])
+        return list(unique.values())
+
+    base_events = deduplicate_events(base_events)
+    target_events = deduplicate_events(target_events)
+
     # 3. Filtern (Basis oder Ziel)
     if module_filter:
         f = _normalize(module_filter)
