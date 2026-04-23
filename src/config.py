@@ -39,6 +39,9 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
+    # Feature Flags
+    router_enabled: bool = True
+
     def _parse_ids(self, raw: str, field: str) -> set[int]:
         if not raw.strip():
             return set()

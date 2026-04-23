@@ -49,7 +49,9 @@ async def init() -> None:
                 banned            INTEGER NOT NULL DEFAULT 0,
                 custom_rate_limit INTEGER NOT NULL DEFAULT -1,
                 last_seen         TEXT NOT NULL DEFAULT '',
-                primary_course    TEXT
+                primary_course    TEXT,
+                pending_intent    TEXT,
+                missing_entities  TEXT
             );
             CREATE TABLE IF NOT EXISTS tokens (
                 user_id      INTEGER PRIMARY KEY,
@@ -64,16 +66,29 @@ async def init() -> None:
         # Migration: Falls Spalten in state.db noch fehlen
         try:
             await db.execute("ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0")
-        except Exception:
-            pass
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower():
+                log.error("Migration failed: %s", e)
         try:
             await db.execute("ALTER TABLE users ADD COLUMN custom_rate_limit INTEGER NOT NULL DEFAULT -1")
-        except Exception:
-            pass
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower():
+                log.error("Migration failed: %s", e)
         try:
             await db.execute("ALTER TABLE users ADD COLUMN primary_course TEXT")
-        except Exception:
-            pass
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower():
+                log.error("Migration failed: %s", e)
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN pending_intent TEXT")
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower():
+                log.error("Migration failed: %s", e)
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN missing_entities TEXT")
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower():
+                log.error("Migration failed: %s", e)
         await db.commit()
 
     # 3. CACHE_DB (Kurs-Index, Mensa, Plan-Cache)
@@ -331,13 +346,14 @@ async def upsert_user(user_id: int, username: str, first_name: str) -> None:
 async def get_all_users() -> list[dict]:
     async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute(
-            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen "
+            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen, pending_intent, missing_entities "
             "FROM users ORDER BY last_seen DESC"
         ) as cur:
             rows = await cur.fetchall()
     return [
         {"user_id": r[0], "username": r[1], "first_name": r[2],
-         "banned": bool(r[3]), "custom_rate_limit": r[4], "last_seen": r[5]}
+         "banned": bool(r[3]), "custom_rate_limit": r[4], "last_seen": r[5],
+         "pending_intent": r[6], "missing_entities": r[7]}
         for r in rows
     ]
 
@@ -345,27 +361,39 @@ async def get_all_users() -> list[dict]:
 async def get_user(user_id: int) -> dict | None:
     async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute(
-            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen "
+            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen, pending_intent, missing_entities "
             "FROM users WHERE user_id=?", (user_id,)
         ) as cur:
             row = await cur.fetchone()
     if not row:
         return None
     return {"user_id": row[0], "username": row[1], "first_name": row[2],
-            "banned": bool(row[3]), "custom_rate_limit": row[4], "last_seen": row[5]}
+            "banned": bool(row[3]), "custom_rate_limit": row[4], "last_seen": row[5],
+            "pending_intent": row[6], "missing_entities": row[7]}
 
 
 async def find_user_by_username(username: str) -> dict | None:
     async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute(
-            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen "
+            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen, pending_intent, missing_entities "
             "FROM users WHERE LOWER(username)=LOWER(?)", (username.lstrip("@"),)
         ) as cur:
             row = await cur.fetchone()
     if not row:
         return None
     return {"user_id": row[0], "username": row[1], "first_name": row[2],
-            "banned": bool(row[3]), "custom_rate_limit": row[4], "last_seen": row[5]}
+            "banned": bool(row[3]), "custom_rate_limit": row[4], "last_seen": row[5],
+            "pending_intent": row[6], "missing_entities": row[7]}
+
+async def set_intent_state(user_id: int, intent: str | None, missing_entities: dict | None = None) -> None:
+    val_intent = intent
+    val_entities = json.dumps(missing_entities) if missing_entities is not None else None
+    async with aiosqlite.connect(STATE_DB) as db:
+        await db.execute(
+            "UPDATE users SET pending_intent=?, missing_entities=? WHERE user_id=?", 
+            (val_intent, val_entities, user_id)
+        )
+        await db.commit()
 
 
 async def set_banned(user_id: int, banned: bool) -> None:

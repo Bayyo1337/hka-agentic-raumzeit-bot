@@ -996,6 +996,8 @@ _CANTEENS_CACHE: dict[str, str] = {} # Name/Kürzel -> ID
 _MEALS_CACHE: dict[str, dict] = {}    # meal_id -> meal_details
 _MEALS_BY_NAME_CACHE: dict[str, str] = {} # normierter_name -> meal_id
 
+_MENSA_LOCK = asyncio.Lock()
+
 _ALLERGEN_MAP = {
     "WE": "Weizen", "RO": "Roggen", "DI": "Dinkel", "EI": "Ei", "FI": "Fisch", 
     "ER": "Erdnüsse", "SO": "Soja", "ML": "Milch", "SL": "Sellerie", "SN": "Senf", 
@@ -1046,89 +1048,90 @@ async def get_mensa_menu(canteen: str | None = None, date: str | None = None) ->
     if not date:
         date = _date.today().isoformat()
     
-    canteen_id = await _get_canteen_id(canteen)
-    
-    # Neues Schema: getCanteen -> lines -> meals
-    query = """
-    query GetCanteenMeals($canteenId: ID!, $date: NaiveDate!) {
-      getCanteen(canteenId: $canteenId) {
-        name
-        lines {
-          id
-          name
-          meals(date: $date) {
-            id
+    async with _MENSA_LOCK:
+        canteen_id = await _get_canteen_id(canteen)
+        
+        # Neues Schema: getCanteen -> lines -> meals
+        query = """
+        query GetCanteenMeals($canteenId: ID!, $date: NaiveDate!) {
+          getCanteen(canteenId: $canteenId) {
             name
-            price { student employee pupil guest }
-            mealType
-            allergens
-            additives
+            lines {
+              id
+              name
+              meals(date: $date) {
+                id
+                name
+                price { student employee pupil guest }
+                mealType
+                allergens
+                additives
+              }
+            }
           }
         }
-      }
-    }
-    """
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(
-                "https://api.mensa-ka.de",
-                json={"query": query, "variables": {"canteenId": canteen_id, "date": date}}
-            )
-            r.raise_for_status()
-            data = r.json()
-            
-            canteen_data = (data.get("data") or {}).get("getCanteen")
-            if not canteen_data:
-                return {"canteen": "Mensa", "date": date, "closed": True, "meals": []}
-            
-            c_name = canteen_data.get("name", "Mensa")
-            
-            flattened_meals = []
-            for line in canteen_data.get("lines", []):
-                l_name = line.get("name", "Diverses")
-                l_id = line.get("id")
-                for m in line.get("meals", []):
-                    # Dekodierung von Allergenen und Zusatzstoffen
-                    m["allergens"] = [_ALLERGEN_MAP.get(a, a) for a in m.get("allergens", [])]
-                    m["additives"] = [_ADDITIVE_MAP.get(a, a) for a in m.get("additives", [])]
+        """
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.post(
+                    "https://api.mensa-ka.de",
+                    json={"query": query, "variables": {"canteenId": canteen_id, "date": date}}
+                )
+                r.raise_for_status()
+                data = r.json()
+                
+                canteen_data = (data.get("data") or {}).get("getCanteen")
+                if not canteen_data:
+                    return {"canteen": "Mensa", "date": date, "closed": True, "meals": []}
+                
+                c_name = canteen_data.get("name", "Mensa")
+                
+                flattened_meals = []
+                for line in canteen_data.get("lines", []):
+                    l_name = line.get("name", "Diverses")
+                    l_id = line.get("id")
+                    for m in line.get("meals", []):
+                        # Dekodierung von Allergenen und Zusatzstoffen
+                        m["allergens"] = [_ALLERGEN_MAP.get(a, a) for a in m.get("allergens", [])]
+                        m["additives"] = [_ADDITIVE_MAP.get(a, a) for a in m.get("additives", [])]
 
-                    # Kompatibilität zum Formatter und Fixes
-                    m["line"] = {"name": l_name}
-                    m["line_id"] = l_id # Für get_mensa_meal_details
-                    m["date"] = date
-                    
-                    # Dietary Flags
-                    mtype = m.get("mealType", "UNKNOWN")
-                    m["isVegan"] = mtype == "VEGAN"
-                    m["isVegetarian"] = mtype in ["VEGAN", "VEGETARIAN"]
-                    
-                    # Preise von Cent in Euro umrechnen
-                    if "price" in m and m["price"]:
-                        for k in ["student", "employee", "pupil", "guest"]:
-                            if m["price"].get(k):
-                                m["price"][k] = m["price"][k] / 100.0
-                    
-                    flattened_meals.append(m)
-                    
-                    # Caching
-                    m_id = m["id"]
-                    _MEALS_CACHE[m_id] = m
-                    # Zusätzlich nach normiertem Namen cachen für LLM-Robustheit
-                    _MEALS_BY_NAME_CACHE[_norm(m["name"])] = m_id
-            
-            if not flattened_meals:
-                 return {"canteen": c_name, "date": date, "closed": True, "meals": []}
-            
-            # Persistenz
-            try:
-                await db.save_mensa_meals(flattened_meals)
-            except Exception as e:
-                log.warning("Mensa-DB: Fehler beim Speichern: %s", e)
-            
-            return {"canteen": c_name, "date": date, "closed": False, "meals": flattened_meals}
-    except Exception as e:
-        log.error("Mensa-API Fehler: %s", e)
-        return {"error": f"Mensa-API aktuell nicht erreichbar: {e}"}
+                        # Kompatibilität zum Formatter und Fixes
+                        m["line"] = {"name": l_name}
+                        m["line_id"] = l_id # Für get_mensa_meal_details
+                        m["date"] = date
+                        
+                        # Dietary Flags
+                        mtype = m.get("mealType", "UNKNOWN")
+                        m["isVegan"] = mtype == "VEGAN"
+                        m["isVegetarian"] = mtype in ["VEGAN", "VEGETARIAN"]
+                        
+                        # Preise von Cent in Euro umrechnen
+                        if "price" in m and m["price"]:
+                            for k in ["student", "employee", "pupil", "guest"]:
+                                if m["price"].get(k):
+                                    m["price"][k] = m["price"][k] / 100.0
+                        
+                        flattened_meals.append(m)
+                        
+                        # Caching
+                        m_id = m["id"]
+                        _MEALS_CACHE[m_id] = m
+                        # Zusätzlich nach normiertem Namen cachen für LLM-Robustheit
+                        _MEALS_BY_NAME_CACHE[_norm(m["name"])] = m_id
+                
+                if not flattened_meals:
+                     return {"canteen": c_name, "date": date, "closed": True, "meals": []}
+                
+                # Persistenz
+                try:
+                    await db.save_mensa_meals(flattened_meals)
+                except Exception as e:
+                    log.warning("Mensa-DB: Fehler beim Speichern: %s", e)
+                
+                return {"canteen": c_name, "date": date, "closed": False, "meals": flattened_meals}
+        except Exception as e:
+            log.error("Mensa-API Fehler: %s", e)
+            return {"error": f"Mensa-API aktuell nicht erreichbar: {e}"}
 
 async def _fetch_canteens_raw():
     async with httpx.AsyncClient() as client:
@@ -1138,70 +1141,114 @@ async def _fetch_canteens_raw():
 
 async def get_mensa_meal_details(meal_id: str) -> dict:
     """Holt Allergene und Zusatzstoffe für ein spezifisches Gericht."""
-    # 1. Aus RAM-Cache versuchen (schnellster Weg)
+    # 1. Schneller RAM-Check (ohne Lock)
     if meal_id in _MEALS_CACHE:
         return _MEALS_CACHE[meal_id]
         
-    # 2. Aus Datenbank versuchen (UUID Match)
-    try:
-        if (db_meal := await db.get_mensa_meal_by_id(meal_id)):
-            _MEALS_CACHE[meal_id] = db_meal # In RAM-Cache für nächsten Zugriff
-            return db_meal
-    except Exception as e:
-        log.warning("Mensa-DB: Fehler bei ID-Lookup: %s", e)
+    async with _MENSA_LOCK:
+        # 2. Aus RAM-Cache versuchen (nach Lock, falls gerade befüllt wurde)
+        if meal_id in _MEALS_CACHE:
+            return _MEALS_CACHE[meal_id]
 
-    # 3. Spezial-Fallback für LLM-Halluzinationen (Muster: kategorie_index, z.B. gut_günstig_1)
-    import re
-    if (pattern_match := re.match(r'^(.+)_([0-9]+)$', meal_id)):
+        # 3. Aus Datenbank versuchen (UUID Match)
         try:
-            def _norm_radical(s):
-                return re.sub(r'[^a-z0-9]', '', s.lower().replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss"))
+            if (db_meal := await db.get_mensa_meal_by_id(meal_id)):
+                _MEALS_CACHE[meal_id] = db_meal # In RAM-Cache für nächsten Zugriff
+                return db_meal
+        except Exception as e:
+            log.warning("Mensa-DB: Fehler bei ID-Lookup: %s", e)
 
-            cat_query = _norm_radical(pattern_match.group(1))
-            idx = int(pattern_match.group(2)) - 1 # 1-based to 0-based
-            
-            # Lade alle Gerichte von heute
+        # 4. Kaltstart-Check: Haben wir überhaupt Daten für heute?
+        try:
             today_meals = await db.get_mensa_meals_for_day(_date.today().isoformat())
+            if not today_meals:
+                log.info("Mensa-Cache leer für heute. Starte Auto-Warming...")
+                # WICHTIG: get_mensa_menu nutzt den gleichen Lock, wir müssen also 
+                # eine interne Version rufen oder den Lock kurz freigeben.
+                # Da get_mensa_menu selbst den Lock nutzt, rufen wir es OHNE Lock auf, 
+                # indem wir den aktuellen Kontext kurz verlassen.
+        except Exception:
+            today_meals = []
+
+    if not today_meals:
+        # Erneuter Versuch ohne Lock (get_mensa_menu setzt eigenen Lock)
+        await get_mensa_menu()
+        # Nach dem Warming erneut mit Lock rein
+        async with _MENSA_LOCK:
+            today_meals = await db.get_mensa_meals_for_day(_date.today().isoformat())
+
+    async with _MENSA_LOCK:
+        # 5. Spezial-Fallback für LLM-Halluzinationen (Line/Kategorie)
+        import re
+        try:
+            q_norm_radical = re.sub(r'[^a-z0-9]', '', meal_id.lower().replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss"))
+            today_meals = await db.get_mensa_meals_for_day(_date.today().isoformat())
+            
             if today_meals:
-                # Filtere nach Kategorie (radikal normalisiert)
-                cat_meals = [m for m in today_meals if cat_query in _norm_radical(m.get("line", {}).get("name", ""))]
-                if 0 <= idx < len(cat_meals):
-                    target = cat_meals[idx]
-                    log.info("Mensa-Detail: Pattern-Match für '%s' -> '%s' (ID: %s)", meal_id, target["name"], target["id"])
-                    return target
+                # 3a. Prüfe, ob die Anfrage exakt einem Linien-Namen entspricht (z.B. "Wahlessen 2")
+                line_meals = [m for m in today_meals if q_norm_radical == re.sub(r'[^a-z0-9]', '', m.get("line", {}).get("name", "").lower())]
+                
+                if line_meals:
+                    # Kombiniere alle Gerichte dieser Linie
+                    all_allergens = set()
+                    all_additives = set()
+                    meal_names = []
+                    for m in line_meals:
+                        meal_names.append(m["name"])
+                        all_allergens.update(m.get("allergens", []))
+                        all_additives.update(m.get("additives", []))
+                    
+                    log.info("Mensa-Detail: Line-Match für '%s' -> %d Gerichte", meal_id, len(line_meals))
+                    return {
+                        "id": f"line_{q_norm_radical}",
+                        "name": f"Alle Gerichte der Linie ({', '.join(meal_names)})",
+                        "allergens": sorted(list(all_allergens)),
+                        "additives": sorted(list(all_additives))
+                    }
+                    
+                # 3b. Falls kein Line-Match, probiere Regex für "Kategorie + Index" (z.B. gut_günstig_1)
+                import re
+                if (pattern_match := re.match(r'^(.+?)[_ ]?([0-9]+)$', meal_id)):
+                    cat_query = pattern_match.group(1)
+                    idx = int(pattern_match.group(2)) - 1 # 1-based to 0-based
+                    cat_meals = [m for m in today_meals if cat_query in re.sub(r'[^a-z0-9]', '', m.get("line", {}).get("name", "").lower())]
+                    if 0 <= idx < len(cat_meals):
+                        target = cat_meals[idx]
+                        log.info("Mensa-Detail: Pattern-Match für '%s' -> '%s' (ID: %s)", meal_id, target["name"], target["id"])
+                        return target
         except Exception as e:
             log.warning("Mensa-DB: Fehler bei Pattern-Lookup: %s", e)
 
-    # 4. Falls kein UUID Match: Versuche Name-Lookup (Robustheit für LLM-Halluzinationen)
-    # Erst im RAM-Namenscache suchen
-    import difflib
-    q_norm = _norm(meal_id)
-    if q_norm in _MEALS_BY_NAME_CACHE:
-        return await get_mensa_meal_details(_MEALS_BY_NAME_CACHE[q_norm])
-    
-    # Dann Fuzzy Match über alle bekannten Namen aus der DB
-    try:
-        all_names = await db.get_all_mensa_meals_for_fuzzy()
-        # all_names ist {Name: ID}
-        norm_to_id = {_norm(name): mid for name, mid in all_names.items()}
+        # 6. Falls kein UUID Match: Versuche Name-Lookup (Robustheit für LLM-Halluzinationen)
+        # Erst im RAM-Namenscache suchen
+        import difflib
+        q_norm = _norm(meal_id)
+        if q_norm in _MEALS_BY_NAME_CACHE:
+            return await get_mensa_meal_details(_MEALS_BY_NAME_CACHE[q_norm])
         
-        # A. Erst exakter Teilstring-Match (beliebt bei Nutzern)
-        for norm_name, mid in norm_to_id.items():
-            if q_norm in norm_name:
-                log.info("Mensa-Detail: DB-Substring-Match für '%s' -> '%s' (ID: %s)", meal_id, norm_name, mid)
-                return await get_mensa_meal_details(mid)
-        
-        # B. Dann Fuzzy Match (bei Tippfehlern)
-        matches = difflib.get_close_matches(q_norm, norm_to_id.keys(), n=1, cutoff=0.4)
-        if matches:
-            target_id = norm_to_id[matches[0]]
-            log.info("Mensa-Detail: DB-Fuzzy-Match für '%s' -> '%s' (ID: %s)", meal_id, matches[0], target_id)
-            return await get_mensa_meal_details(target_id)
-    except Exception as e:
-        log.warning("Mensa-DB: Fehler bei Fuzzy-Lookup: %s", e)
+        # Dann Fuzzy Match über alle bekannten Namen aus der DB
+        try:
+            all_names = await db.get_all_mensa_meals_for_fuzzy()
+            # all_names ist {Name: ID}
+            norm_to_id = {_norm(name): mid for name, mid in all_names.items()}
+            
+            # A. Erst exakter Teilstring-Match (beliebt bei Nutzern)
+            for norm_name, mid in norm_to_id.items():
+                if q_norm in norm_name:
+                    log.info("Mensa-Detail: DB-Substring-Match für '%s' -> '%s' (ID: %s)", meal_id, norm_name, mid)
+                    return await get_mensa_meal_details(mid)
+            
+            # B. Dann Fuzzy Match (bei Tippfehlern)
+            matches = difflib.get_close_matches(q_norm, norm_to_id.keys(), n=1, cutoff=0.4)
+            if matches:
+                target_id = norm_to_id[matches[0]]
+                log.info("Mensa-Detail: DB-Fuzzy-Match für '%s' -> '%s' (ID: %s)", meal_id, matches[0], target_id)
+                return await get_mensa_meal_details(target_id)
+        except Exception as e:
+            log.warning("Mensa-DB: Fehler bei Fuzzy-Lookup: %s", e)
 
-    # 4. Finaler Fehlerfall
-    return {"error": "Gerichts-Details aktuell nicht verfügbar. Bitte frage erst nach dem Mensa-Menü."}
+        # 7. Finaler Fehlerfall
+        return {"error": "Gerichts-Details aktuell nicht verfügbar. Bitte frage erst nach dem Mensa-Menü."}
 
 
 # ---------------------------------------------------------------------------
@@ -1315,11 +1362,11 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_mensa_meal_details",
-            "description": "Gibt Details (Zusatzstoffe, Allergene) zu einem Gericht zurück. WICHTIG: Nutze die UUID aus get_mensa_menu ODER den vollständigen Namen des Gerichts (z.B. 'Seelachs'). Rate niemals IDs wie 'gut_guenstig_1'!",
+            "description": "Gibt Details (Zusatzstoffe, Allergene) zu einem Gericht zurück. WICHTIG: Nutze ENTWEDER die UUID aus get_mensa_menu ODER den VOLLSTÄNDIGEN Namen des Gerichts (z.B. 'Seelachs'). Rate NIEMALS IDs wie 'gut_guenstig_1'!",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "meal_id": {"type": "string", "description": "Die UUID oder der Name des Gerichts."}
+                    "meal_id": {"type": "string", "description": "Die UUID oder der VOLLSTÄNDIGE Name des Gerichts (bevorzugt)."}
                 },
                 "required": ["meal_id"]
             }

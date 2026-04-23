@@ -17,8 +17,9 @@ Lies das `.gemini/session_log.md`, um den Kontext der Änderungen zu verstehen.
 
 ### 2. Finale Integrationstests
 Führe das gesamte Test-Set aus, um sicherzustellen, dass keine Regressionen entstanden sind:
+- **E2E-Tests:** Führe `make test-e2e` aus. Schlagen Tests fehl, darf nicht committet werden!
 - `make check` oder `make test` (falls vorhanden).
-- Führe das `scripts/repro_issue.py` ein letztes Mal aus.
+- Führe das `scripts/repro_issue.py` ein letztes Mal aus (falls es sich um einen Bugfix handelt).
 - Prüfe auf Linting-Fehler: `uv run ruff check .`.
 - **Bot-Start Validierung:** Führe `make run` aus. Beobachte, ob der Bot fehlerfrei initialisiert und das Dashboard startet. Beende den Bot anschließend sauber durch Eingabe von `exit` im Terminal-Prompt (nicht mit Ctrl+C), um die Shutdown-Logik zu prüfen. Falls der Prozess mit einem Fehler (Crash) abbricht: Aktiviere sofort den `issue-planner` Skill, um den Traceback zu analysieren und einen neuen Plan in `.gemini/prompts/problem.md` zu erstellen. Committe in diesem Fall keinesfalls fehlerhaften Code.
 

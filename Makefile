@@ -1,4 +1,4 @@
-.PHONY: run check reset lint clean
+.PHONY: run check reset lint clean test-e2e
 
 run:
 	@echo "🧹 Bereinige Cache..."
@@ -12,6 +12,9 @@ run:
 
 check:
 	uv run python scripts/check.py
+
+test-e2e:
+	PYTHONPATH=. uv run pytest tests/test_e2e.py -v
 
 reset:
 	@echo "Gesprächshistorie wird nicht persistent gespeichert – einfach Bot neu starten."

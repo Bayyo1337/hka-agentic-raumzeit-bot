@@ -149,22 +149,24 @@ Nutzer und Admins wünschten sich präzisere Erklärungen und eine bessere Über
 - **Inhalt**: Manueller Review der Markdown-Struktur in den geänderten Funktionen.
 
 ### Git
-- Commit: (steht aus)
+- Commit: `a0c5c25`
+# Session Log - 20.04.2026
 
-
-## Task: Fakultäten-Filterung bei /setcourse
-Nutzer beschwerten sich über eine unübersichtliche Liste (57 Einträge), die viele irrelevante Verwaltungseinheiten enthielt.
+## Task: Mensa-ID-Auflösung (Robustness Fix)
+Nutzer erhielten Fehlermeldungen bei Allergen-Abfragen, da das LLM IDs wie `wahlessen1` (ohne Unterstrich) generierte, was nicht von der bisherigen Regex erfasst wurde.
 
 ### Changes
-- **src/bot.py**:
-    - `_show_faculty_selection`: Filter implementiert, der nur Einheiten mit dem Flag `faculty: true` berücksichtigt. Die Liste wurde dadurch auf die 6 echten Fakultäten reduziert.
+- **src/tools.py**:
+    - Regex in `get_mensa_meal_details` verbessert: `r'^(.+?)[_ ]?([0-9]+)$'` (Unterstrich/Leerzeichen vor dem Index nun optional).
+    - `TOOL_DEFINITIONS`: Beschreibung für `get_mensa_meal_details` massiv geschärft. Betont nun die Verwendung von vollständigen Namen und verbietet das Raten von IDs.
 
 ### Validation
-- **Analyse**: `scripts/inspect_departments.py` (simuliert) bestätigte die Existenz des `faculty` Flags in den Rohdaten.
+- **Logic**: `scripts/repro_mensa_wahlessen.py` bestätigte die erfolgreiche Auflösung von `wahlessen1`.
 - **Syntax**: `py_compile` erfolgreich.
 
 ### Git
 - Commit: (steht aus)
+
 
 
 ## Task: Dekodierung von Mensa-Allergenen & Zusatzstoffen
@@ -184,3 +186,22 @@ Die Mensa-API liefert Allergene und Zusatzstoffe nur als technische Kürzel (z.B
 
 ### Git
 - Commit: `18cc59c`
+
+# Session Log - 23.04.2026
+
+## Task: Mensa-Allergen-Fix (Auto-Warming & Sync)
+Nutzer konnten Allergene oft nicht abfragen, wenn der Cache noch leer war oder Race Conditions bei parallelen Tool-Calls auftraten.
+
+### Changes
+- **src/tools.py**:
+    - `_MENSA_LOCK` eingeführt, um parallele API-Zugriffe zu synchronisieren.
+    - `get_mensa_meal_details` erweitert: Falls die DB für heute leer ist, wird `get_mensa_menu()` automatisch aufgerufen (Auto-Warming).
+    - `get_mensa_menu` mit Lock abgesichert.
+    - Indentation-Fixes für synchronisierte Blöcke.
+
+### Validation
+- **Logic**: `scripts/repro_mensa_no_menu.py` bestätigt, dass Details nun auch bei komplett leerer Datenbank im ersten Anlauf geladen werden.
+- **Syntax**: `py_compile` erfolgreich.
+
+### Git
+- Commit: (steht aus)

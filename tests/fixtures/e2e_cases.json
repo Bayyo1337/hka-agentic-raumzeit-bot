@@ -1,0 +1,74 @@
+[
+  {
+    "name": "Einfache Raumabfrage",
+    "input": "Wann ist M-102 frei?",
+    "expected_intent": "room_timetable",
+    "expected_tools": ["get_room_timetable"],
+    "expected_keywords": ["M-102"],
+    "forbidden_keywords": ["Traceback", "Exception"]
+  },
+  {
+    "name": "Mensa Speiseplan",
+    "input": "Was gibt es heute in der Mensa?",
+    "expected_intent": "mensa_menu",
+    "expected_tools": ["get_mensa_menu"],
+    "expected_keywords": ["Moltke"],
+    "forbidden_keywords": ["Traceback", "Exception"]
+  },
+  {
+    "name": "Dozenten Stundenplan",
+    "input": "Wann hat Herr Taheran heute Vorlesung?",
+    "expected_intent": "lecturer_timetable",
+    "expected_tools": ["get_lecturer_timetable"],
+    "expected_keywords": ["Taheran"],
+    "forbidden_keywords": ["Traceback", "Exception"]
+  },
+  {
+    "name": "Lageplan abfragen",
+    "input": "Wo ist Gebäude LI?",
+    "expected_intent": "campus_map",
+    "expected_tools": ["get_campus_map"],
+    "expected_keywords": ["LI"],
+    "forbidden_keywords": ["Traceback", "Exception"]
+  },
+  {
+    "name": "Allergene abfragen",
+    "input": "Welche Allergene sind in Wahlessen 2?",
+    "expected_intent": "mensa_details",
+    "expected_tools": ["get_mensa_meal_details"],
+    "expected_keywords": ["Allergene"],
+    "forbidden_keywords": ["Traceback", "Exception"]
+  },
+  {
+    "name": "Terminkollision abfragen",
+    "input": "Gibt es Überschneidungen bei Maschinenbau zwischen dem 3. und 5. Semester?",
+    "expected_intent": "conflict_analysis",
+    "expected_tools": ["find_timetable_conflicts"],
+    "expected_keywords": ["MABB", "Konflikt"],
+    "forbidden_keywords": ["Traceback", "Exception"]
+  },
+  {
+    "name": "Sprechstunde Dozent",
+    "input": "Wann hat Herr Taheran Sprechstunde?",
+    "expected_intent": "lecturer_info",
+    "expected_tools": ["get_lecturer_info"],
+    "expected_keywords": ["Taheran"],
+    "forbidden_keywords": ["Traceback", "Exception"]
+  },
+  {
+    "name": "E-Mail Dozent",
+    "input": "Wie lautet die E-Mail von Herr Taheran?",
+    "expected_intent": "lecturer_info",
+    "expected_tools": ["get_lecturer_info"],
+    "expected_keywords": ["Taheran", "@"],
+    "forbidden_keywords": ["Traceback", "Exception"]
+  },
+  {
+    "name": "Fallback / Smalltalk",
+    "input": "Was kannst du eigentlich alles?",
+    "expected_intent": "smalltalk_fallback",
+    "expected_tools": [],
+    "expected_keywords": [],
+    "forbidden_keywords": ["Traceback", "Exception"]
+  }
+]

@@ -547,8 +547,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     history = await db.load_history(chat_id)
     try:
+        intent = "smalltalk_fallback"
+        if settings.router_enabled:
+            try:
+                from src.router import router_instance
+                router_result = await router_instance.classify_message(text, {"user_id": user_id, "chat_id": chat_id}, u or {})
+                log.info("Router Result: Intent=%s, Confidence=%.2f, Strategy=%s",
+                         router_result.intent, router_result.confidence, router_result.strategy.action)
+
+                intent = router_result.intent
+
+                if router_result.strategy.action == "ask_clarification":
+                    await db.set_intent_state(user_id, router_result.intent, router_result.entities)
+                    await _send_reply(update, chat_id, "Es fehlen noch Informationen: " + router_result.strategy.reason)
+                    return
+
+            except Exception as router_exc:
+                log.warning("Router Failed: %s", router_exc)
+
         reply, tok_in, tok_out, collected_results = await agent.run(
-            text, history, user_label=user_label, primary_course=primary_course
+            text, history, user_label=user_label, primary_course=primary_course, intent=intent
         )
         await db.save_history(chat_id, history)
         await db.add_tokens(user_id, tok_in, tok_out)
