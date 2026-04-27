@@ -34,4 +34,4 @@ Folgende Ursachen wurden identifiziert:
 - Verifiziert, dass der Datenbank-Index korrekt genutzt wird und die Abfragen nun in Sekundenbruchteilen statt nach 10-20 Sekunden abgeschlossen sind.
 - Filter-Fehlermeldung verifiziert.
 
-Status: ✅ Gelöst und Optimiert.
+Status: Gelöst und Optimiert.
