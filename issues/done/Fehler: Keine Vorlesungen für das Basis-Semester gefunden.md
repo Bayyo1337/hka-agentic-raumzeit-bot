@@ -1,4 +1,4 @@
-# Analyse & Lösung: ❌ Keine Vorlesungen für das Basis-Semester gefunden.
+# Analyse & Lösung: Keine Vorlesungen für das Basis-Semester gefunden.
 
 ## Problem-Analyse
 Der Fehler trat in der Funktion `find_timetable_conflicts` auf, wenn für den gewählten Zeitraum (aktuelle Woche) keine Vorlesungen für das Basis-Semester gefunden wurden.
