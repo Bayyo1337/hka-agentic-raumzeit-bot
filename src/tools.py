@@ -1216,7 +1216,7 @@ async def get_mensa_meal_details(meal_id: str, is_retry: bool = False) -> dict:
                     
                 # 3b. Falls kein Line-Match, probiere Regex für "Kategorie + Index" (z.B. gut_günstig_1)
                 import re
-                if (pattern_match := re.match(r'^(.+?)[_ ]?([0-9]+)$', meal_id)):
+                if (pattern_match := re.match(r'^(.+?)[_ ]?([0-9]+)(?:_.*)?$', meal_id)):
                     cat_query = _norm_radical(pattern_match.group(1))
                     idx = int(pattern_match.group(2)) - 1 # 1-based to 0-based
                     cat_meals = [m for m in today_meals if cat_query in _norm_radical(m.get("line", {}).get("name", ""))]
@@ -1431,14 +1431,14 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "find_timetable_conflicts",
-            "description": "Analysiert Stundenplan-Überschneidungen zwischen zwei Semestern, optional gefiltert nach einem Fach.",
+            "description": "Analysiert Stundenplan-Überschneidungen zwischen zwei kompletten Semestern. WICHTIG: Wenn kein konkretes Fach genannt wurde, lasse module_filter leer und vergleiche alle Vorlesungen.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "course": {"type": "string", "description": "Name oder Kürzel des Studiengangs (z.B. 'Maschinenbau')."},
                     "base_sem": {"type": "integer", "description": "Das Basis-Semester (z.B. 2)."},
                     "target_sem": {"type": "integer", "description": "Das Ziel-Semester zum Vergleich (z.B. 3)."},
-                    "module_filter": {"type": "string", "description": "Optionaler Filter für ein Fach (z.B. 'etechnik')."},
+                    "module_filter": {"type": "string", "description": "OPTIONAL: Filter für ein Fach (z.B. 'thermodynamik'). Leer lassen für kompletten Plan-Vergleich!"},
                 },
                 "required": ["course", "base_sem", "target_sem"],
             },
@@ -1453,7 +1453,7 @@ TOOL_DEFINITIONS = [
 TOOL_HANDLERS = {
     "get_all_rooms":           lambda inp: get_all_rooms(),
     "get_room_timetable":      lambda inp: get_room_timetable(inp["room_name"], inp.get("date")),
-    "get_course_timetable":    lambda inp: get_course_timetable(inp["course_semester"], inp.get("date")),
+    "get_course_timetable":    lambda inp: get_course_timetable(inp.get("course_key") or inp.get("course_semester"), inp.get("date")),
     "get_lecturer_timetable":  lambda inp: get_lecturer_timetable(inp["account"], inp.get("date")),
     "get_lecturer_info":       lambda inp: get_lecturer_info(inp["account"]),
     "get_mensa_menu":          lambda inp: get_mensa_menu(inp.get("canteen"), inp.get("date")),

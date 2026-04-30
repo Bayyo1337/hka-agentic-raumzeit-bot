@@ -212,25 +212,25 @@ Um die Qualitätssicherung tagesaktuell zu gestalten und den Bot-Start zu beschl
 - **Bot**: Syntax-Check erfolgreich.
 
 ### Git
-- Commit: `9c0a4c7`
+- Commit: `3ef78b3`
 
 # Session Log - 30.04.2026
 
-## Task: Prompt-Präzisierung & Dozenten-Fixes
-Die KI lieferte bei komplexen Konflikt-Anfragen fälschlicherweise einen "Kein Kurs hinterlegt" Fehler. Zudem gab es einen Bug bei der Extraktion von Dozenten-Kürzeln.
+## Task: Konfliktanalyse-Härtung (LLM-Guidance)
+Das LLM zögerte bei einfachen Konflikt-Anfragen und forderte unnötigerweise weitere Informationen (Module) an, obwohl Kurs und Semester bereits bekannt waren.
 
 ### Changes
 - **src/agent.py**:
-    - System-Prompt geschärft: Die Regel für `no_course` (persönlicher Plan) wurde so präzisiert, dass sie nicht mehr bei expliziten Kursabfragen greift, selbst wenn kein Nutzerprofil vorhanden ist.
+    - `conflict_analysis` Instruktion massiv verschärft: Verbot von Rückfragen nach Modulen, Befehl zum kompletten Semestervergleich bei Fehlen eines Filters.
 - **src/tools.py**:
-    - `_resolve_account` (Dozenten): Regex gehärtet (`\b` Wortgrenzen hinzugefügt), um zu verhindern, dass bei halluzinierten IDs wie `offer0001` fälschlicherweise `ffer0001` extrahiert wird.
-    - `get_lecturer_timetable` Beschreibung im OpenAI-Schema präzisiert: Verbot des Kürzels-Ratens explizit formuliert.
+    - `find_timetable_conflicts` Tool-Beschreibung präzisiert: Expliziter Hinweis auf die Optionalität des `module_filter` und die Durchführung des Gesamtvergleichs.
 
 ### Validation
-- **Dozenten**: `scripts/repro_lecturer_id.py` bestätigte, dass falsche Teil-Kürzel nicht mehr extrahiert werden.
-- **Prompting**: Logische Prüfung der neuen Instruktions-Kette.
+- **Logic**: `scripts/repro_conflict_logic.py` bestätigte den sofortigen Tool-Call ohne Rückfragen bei einer Standard-Anfrage.
+- **Syntax**: `py_compile` erfolgreich.
 
 ### Git
-- Commit: `9c0a4c7`
+- Commit: (steht aus)
+
 
 

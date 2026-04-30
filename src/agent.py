@@ -70,7 +70,7 @@ INTENT_CONFIGS = {
     },
     "conflict_analysis": {
         "tools": ["find_timetable_conflicts"],
-        "instruction": "Du bist Spezialist für Überschneidungen im Stundenplan. Extrahiere Kurs (z.B. 'Maschinenbau'), base_sem, target_sem und ggf. module_filter."
+        "instruction": "Du bist Spezialist für Überschneidungen im Stundenplan. Extrahiere Kurs (z.B. 'Maschinenbau'), base_sem und target_sem. Der module_filter ist OPTIONAL. Wenn kein Modul genannt wurde, lasse ihn leer und vergleiche die gesamten Semester. Frage NIEMALS nach Modulen!"
     },
     "smalltalk_fallback": {
         "tools": [
