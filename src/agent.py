@@ -105,38 +105,42 @@ def _extraction_prompt(primary_course: Optional[str] = None, intent: str = "smal
     
     tools_str = "\n".join(f"- {ALL_TOOLS_DEF[t]}" for t in allowed_tools if t in ALL_TOOLS_DEF)
     
-    base = f"""{instruction}
+    # 1. Basis-Instruktion
+    sections = [
+        instruction,
+        "\nAnalysiere die Nutzernachricht und gib ausschließlich valides JSON zurück. Kein Text, keine Erklärung.",
+        "\nVerfügbare Tools:\n" + tools_str
+    ]
 
-Analysiere die Nutzernachricht und gib ausschließlich valides JSON zurück. Kein Text, keine Erklärung.
-
-Verfügbare Tools:
-{tools_str}
-
-Regeln:
-- Konkreter Tag genannt ("Montag", "nächste Woche Dienstag", "heute", "morgen"): GENAU 1 Call mit diesem date
-- Ganze Woche ("diese Woche", "nächste Woche" ohne Tagangabe): 5 Calls für Mo–Fr mit je einem date
-- Kein Datum ("zeig Stundenplan"): date weglassen
-- Max. 6 Calls gesamt
-
+    # 2. Zeit-Regeln (nur wenn Tools Datumsangaben benötigen oder für Konsistenz)
+    time_intents = ["room_timetable", "course_timetable", "lecturer_timetable", "mensa_menu", "lecturer_info", "smalltalk_fallback"]
+    if intent in time_intents:
+        sections.append("""
 Regeln zur Zeitrechnung:
-- "nächste Woche" ohne Tag → alle 5 Tage (Mo–Fr) der nächsten Kalenderwoche.
-- "die nächsten Tage" / "diese Woche" → alle verbleibenden Tage der aktuellen Woche (inkl. Wochenende).
-- "und sonst?" / "was noch?" → restliche Termine der aktuellen Woche.
-- Datum am Wochenende (Sa/So) → Normaler Call mit diesem date (API liefert auch Blockveranstaltungen).
-- Datum in der Vergangenheit → meist Tippfehler, prüfe ob der gleiche Tag im nächsten Monat/Jahr gemeint sein könnte.
+- Konkreter Tag genannt: GENAU 1 Call mit diesem date (YYYY-MM-DD)
+- "nächste Woche" ohne Tag → alle 5 Tage (Mo–Fr) der nächsten Kalenderwoche
+- "die nächsten Tage" / "diese Woche" → alle verbleibenden Tage der aktuellen Woche
+- Datum in der Vergangenheit → meist Tippfehler, prüfe Folgemonat/-jahr
+- Max. 6 Calls gesamt""")
 
+    # 3. Fehler-Handling (Nur wenn Profil relevant ist)
+    if intent in ["course_timetable", "smalltalk_fallback"]:
+        sections.append(f"""
 Fehler-Handling:
-- Wenn der Nutzer explizit nach SEINEM persönlichen Plan fragt ("mein Plan", "was habe ich heute"), aber im 'Nutzer-Profil' unten steht 'Kein Kurs hinterlegt', darfst du keinen Kurs raten! Gib in diesem Fall exakt {{"error": "no_course"}} zurück.
-- WICHTIG: Wenn der Nutzer explizite Kurs-Keys (z.B. MABB, INFB) oder Semester in der Nachricht nennt, ist dies KEINE persönliche Plan-Anfrage. In diesem Fall musst du die Tools (find_timetable_conflicts, get_course_timetable) ganz normal mit den extrahierten Daten aufrufen!
+- Wenn der Nutzer nach SEINEM persönlichen Plan fragt ("mein Plan", "was habe ich heute"), aber im 'Nutzer-Profil' unten steht 'Kein Kurs hinterlegt', darfst du keinen Kurs raten! Gib in diesem Fall exakt {{"error": "no_course"}} zurück.
+- WICHTIG: Wenn der Nutzer explizite Kurs-Keys (z.B. MABB, INFB) nennt, ist dies KEINE persönliche Anfrage. Führe das Tool ganz normal aus!""")
 
-
+    # 4. Format & Kontext
+    sections.append("""
 Kürzel-Beispiele: MABB=Maschinenbau, INFB=Informatik, IWIB=Wirtschaftsinformatik, EIMB=Elektro/IT
 
 Ausgabeformat:
-{{"calls": [{{"tool": "TOOLNAME", "args": {{"param": "wert"}}}}, ...]}}"""
-    
+{"calls": [{"tool": "TOOLNAME", "args": {"param": "wert"}}, ...]}""")
+
+    prompt = "\n".join(sections)
     profile_info = f"\nNutzer-Profil: Der Nutzer studiert '{primary_course}'." if primary_course else "\nNutzer-Profil: Kein Kurs hinterlegt."
-    return f"{base}\n\nHeutiges Datum: {date.today().isoformat()}{profile_info}"
+    
+    return f"{prompt}\n\nHeutiges Datum: {date.today().isoformat()}{profile_info}"
 
 def _resolve_model() -> str:
     if settings.llm_model:

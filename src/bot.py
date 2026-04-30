@@ -167,7 +167,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "_\"Welche Vorlesungen hat MABB Semester 2 morgen?\"_\n"
         "_\"Was gibt es heute in der Mensa?\"_\n\n"
         "Nutze `/help` für eine Liste aller Befehle.\n"
-        "Nutze `/setcourse`, um dein Studium für personalisierte Fragen zu hinterlegen."
+        "Nutze `/setcourse`, um dein Studium für personalisierte Fragen zu hinterlegen.\n\n"
+        "📄 [Quellcode (AGPL-3.0)](https://github.com/Bayyo1337/hka-agentic-raumzeit-bot)"
     )
     msg = await update.message.reply_text(text, parse_mode="Markdown")
     _bot_messages.setdefault(update.effective_chat.id, []).append(msg.message_id)

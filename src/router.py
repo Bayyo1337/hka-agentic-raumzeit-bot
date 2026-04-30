@@ -40,8 +40,9 @@ class Router:
             (r"(?i)\b[A-Z]{1,2}-\d{3}\b", "room_timetable", "direct_tool"),
             (r"(?i)\b(mensa|speiseplan|essen|hunger)\b", "mensa_menu", "agent_flow"),
             (r"(?i)\b(allergene|zusatzstoffe|vegan|vegetarisch)\b", "mensa_details", "agent_flow"),
-            (r"(?i)\b(wo ist|lageplan|gebäude|raum finden)\b", "campus_map", "agent_flow"),
+            (r"(?i)\b(wo ist|weg zu|lageplan|gebäude|raum finden|wo finde ich|stockwerk|etage)\b", "campus_map", "agent_flow"),
             (r"(?i)\b(semesterzeiten|vorlesungsfreie zeit|prüfungszeit)\b", "university_calendar", "direct_tool"),
+
         ]
 
     def _fast_path(self, text: str) -> Optional[RouterOutput]:
