@@ -91,6 +91,42 @@ make run
 
 ---
 
+## 🛠️ Betrieb & Kommandos
+
+### 👤 Nutzer-Befehle
+*   `/start` & `/help`: Einstieg und Befehlsübersicht.
+*   `/mensa`: Ruft den aktuellen Speiseplan der Mensa Moltke ab.
+*   `/setcourse`: Startet den Assistenten zur Personalisierung deines Stundenplans.
+*   `/myplan`: Zeigt deinen gespeicherten Stundenplan für den heutigen Tag.
+*   `/stats`: Deine persönlichen Nutzungsstatistiken und Token-Verbrauch.
+*   `/reset`: Löscht deinen bisherigen Gesprächsverlauf mit der KI.
+*   `/bug [beschreibung]`: Meldet einen Fehler direkt an das Entwickler-Team.
+
+### 🛡️ Admin-Befehle
+#### System & Daten
+*   `/admin`: Kompakt-Dashboard mit Systemstatus und Statistiken.
+*   `/sync [all|courses|lecturers]`: Manuelle Synchronisation der HKA-Datenquellen.
+*   `/indexage`: Zeigt an, wie alt der aktuelle Kurs-Index ist.
+*   `/courses`: Listet alle aktuell im System bekannten Studiengänge auf.
+*   `/ping`: Einfacher Verbindungs- und Latenzcheck.
+*   `/maintenance`: Schaltet den Wartungsmodus (KI-Pause) ein/aus.
+
+#### Nutzer- & Feedback-Management
+*   `/user [ID|Username]`: Sucht detaillierte Informationen zu einem Nutzer.
+*   `/ban` / `/unban [ID]`: Sperrt oder entsperrt einen Nutzer für den Bot.
+*   `/broadcast [nachricht]`: Sendet eine wichtige Mitteilung an alle Nutzer.
+*   `/feedback`: Zeigt alle eingegangenen Bug-Reports und Nutzerfeedbacks.
+*   `/delfeedback [ID]`: Löscht einen Feedback-Eintrag nach der Bearbeitung.
+
+#### Konfiguration & Debugging
+*   `/loglevel [DEBUG|INFO|WARNING]`: Ändert die Detailtiefe der Logs zur Laufzeit.
+*   `/setprovider [openai|gemini|anthropic]`: Wechselt den LLM-Provider (LiteLLM).
+*   `/rooms`: Statusbericht über die Raumbelegung und Datenbank-Konsistenz.
+*   `/togglepersonal`: Aktiviert/Deaktiviert die Personalisierungs-Features global.
+*   `/togglemap`: Schaltet die automatische Karten-Generierung ein/aus.
+
+---
+
 ## 🧠 Architektur & Technologie
 
 *   **Daten-Pfeiler (3-Pillar DB):** 
