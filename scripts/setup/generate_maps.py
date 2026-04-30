@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 # Pfade
-PDF_PATH = "HKA_Lageplan_A4.pdf"
+PDF_PATH = "assets/HKA_Lageplan_A4.pdf"
 OUTPUT_DIR = Path("data/maps")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
