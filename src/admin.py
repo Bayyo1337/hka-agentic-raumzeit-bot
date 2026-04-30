@@ -9,6 +9,7 @@ import re
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ContextTypes
+from telegram.helpers import escape_markdown
 from src.config import settings
 from src import agent
 from src import tools as raumzeit
@@ -57,7 +58,7 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     tok_out_all = sum(v[1] for v in all_tokens.values())
     total_all = sum([await db.get_total_count(u["user_id"]) for u in users])
 
-    provider = agent.current_provider()
+    provider = escape_markdown(agent.current_provider(), version=1)
     lines = [
         "📋 Admin-Übersicht",
         f"Uptime: {h}h {m}min  |  Provider: {provider}" + (" 🔧 Wartung" if maint_on else ""),
@@ -74,6 +75,7 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         for u in users:
             uid = u["user_id"]
             name = f"@{u['username']}" if u["username"] else u["first_name"] or str(uid)
+            name = escape_markdown(name, version=1)
             recent = await db.get_recent_count(uid)
             total = await db.get_total_count(uid)
             tok_in, tok_out = all_tokens.get(uid, (0, 0))
@@ -131,7 +133,7 @@ async def cmd_rooms(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             names.append(name)
 
     names.sort()
-    text = "🏫 Verfügbare Räume:\n" + ", ".join(names)
+    text = "🏫 Verfügbare Räume:\n" + ", ".join(escape_markdown(n, version=1) for n in names)
     if len(text) > 4000:
         text = text[:4000] + "…"
     await update.message.reply_text(text)
@@ -223,6 +225,7 @@ async def cmd_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     total = await db.get_total_count(uid)
     history = await db.load_history(uid)
     name = f"@{u['username']}" if u and u["username"] else (u["first_name"] if u else str(uid))
+    name = escape_markdown(name, version=1)
     custom_limit = u["custom_rate_limit"] if u else -1
     effective_limit = custom_limit if custom_limit >= 0 else settings.rate_limit_per_hour
     lines = [

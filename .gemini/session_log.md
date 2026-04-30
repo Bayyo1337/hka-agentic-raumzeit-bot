@@ -216,20 +216,24 @@ Um die Qualitätssicherung tagesaktuell zu gestalten und den Bot-Start zu beschl
 
 # Session Log - 30.04.2026
 
-## Task: Router-Härtung (Conflict Prevention)
-Trotz Agent-Fixes blockierte der Router Anfragen durch unnötige "ask_clarification" Strategien.
+## Task: Markdown-Fix (Can't parse entities)
+Der Bot meldete Netzwerkfehler beim `/admin` Kommando und bei Stundenplan-Ausgaben, da Sonderzeichen (insb. `_`) in Namen oder Modulen das Telegram-Markdown zerstörten.
 
 ### Changes
-- **src/router.py**:
-    - Fast-Path Heuristik hinzugefügt: Keywords wie "überschneidung", "konflikt" etc. führen nun sofort zum `agent_flow`.
-    - LLM-Instruktion geschärft: Explizites Verbot von Klärungsanfragen bei Konfliktanfragen mit Kurs + Semester.
+- **src/formatter.py**:
+    - `_esc` Hilfsfunktion hinzugefügt, um `_`, `*`, `` ` `` und `[` zu maskieren.
+    - Anwendung von `_esc` auf Modulnamen, Dozenten, Räume und Kurs-Keys in `_render_timeline` und `_fmt_conflicts`.
+- **src/admin.py**:
+    - `escape_markdown` aus `telegram.helpers` importiert.
+    - Anwendung von `escape_markdown(..., version=1)` in `cmd_admin`, `cmd_user` und `cmd_rooms` auf alle dynamischen Texte (Usernamen, Provider, Raumnamen).
 
 ### Validation
-- **Unit**: `scripts/test_router_conflict.py` bestätigte sowohl Fast-Path Hit als auch erfolgreiche LLM-Entscheidung ohne Klärung.
 - **Syntax**: `py_compile` erfolgreich.
+- **Logik**: Manuelle Prüfung der betroffenen Stellen auf fehlende Maskierung.
 
 ### Git
 - Commit: (steht aus)
+
 
 
 
