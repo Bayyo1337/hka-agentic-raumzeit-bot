@@ -16,6 +16,12 @@ check:
 test-e2e:
 	PYTHONPATH=. uv run pytest tests/test_e2e.py -v
 
+test-e2e-dynamic:
+	@echo "📡 Erzeuge dynamische Test-Cases aus Realdaten..."
+	PYTHONPATH=. uv run python scripts/generate_e2e_fixtures.py
+	@echo "🧪 Starte E2E-Tests mit Kaltstart-Zwang..."
+	PYTHONPATH=. uv run pytest tests/test_e2e.py -v
+
 reset:
 	@echo "Gesprächshistorie wird nicht persistent gespeichert – einfach Bot neu starten."
 

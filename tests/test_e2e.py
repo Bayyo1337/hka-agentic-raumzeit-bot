@@ -14,7 +14,10 @@ from src.router import router_instance
 from src import agent
 from src import tools
 
-fixtures_path = Path(__file__).parent / "fixtures" / "e2e_cases.json"
+fixtures_path = Path(__file__).parent / "fixtures" / "dynamic_e2e_cases.json"
+if not fixtures_path.exists():
+    fixtures_path = Path(__file__).parent / "fixtures" / "e2e_cases.json"
+
 with open(fixtures_path, "r", encoding="utf-8") as f:
     test_cases = json.load(f)
 
@@ -32,6 +35,8 @@ import pytest_asyncio
 async def setup_test_db():
     await db.init()
     await db.upsert_user(12345, "testuser", "Test User")
+    # ZWINGE KALTSTART für Mensa: Lösche Cache vor jedem Test
+    await db.clear_mensa_cache()
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", test_cases, ids=lambda c: c["name"])

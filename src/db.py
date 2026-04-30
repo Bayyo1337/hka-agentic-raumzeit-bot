@@ -548,6 +548,13 @@ async def get_mensa_meals_for_day(date_str: str) -> list[dict]:
     return [json.loads(r[0]) for r in rows]
 
 
+async def clear_mensa_cache() -> None:
+    """Löscht alle Mensa-Gerichte aus dem Cache (für Tests)."""
+    async with aiosqlite.connect(CACHE_DB) as db:
+        await db.execute("DELETE FROM mensa_meals")
+        await db.commit()
+
+
 # ── Telemetrie & Feedback (TELEMETRY_DB) ─────────────────────────────────────
 
 async def save_test_case(query: str) -> bool:

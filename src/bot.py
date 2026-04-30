@@ -655,19 +655,22 @@ async def _weekly_lecturer_refresh():
     while True: await asyncio.sleep(7*24*3600); await _run_lecturer_build()
 
 async def _background_sync_scheduler():
-    """Führt jede Nacht um 04:00 Uhr einen Sync aus."""
+    """Führt jede Nacht um 04:00 Uhr einen Sync aus (Kurse & Mensa)."""
     while True:
         now = datetime.now()
         target = datetime.combine(now.date(), _time(4, 0))
         if target <= now:
             target += timedelta(days=1)
-        
+
         wait_seconds = (target - now).total_seconds()
-        log.info("Nächster automatischer Sync um 04:00 Uhr (in %.1f Stunden)", wait_seconds / 3600)
+        log.info("Background-Sync geplant in %.1f Stunden.", wait_seconds / 3600)
         await asyncio.sleep(wait_seconds)
-        
-        log.info("Starte nächtlichen automatischen Sync...")
+
+        log.info("Starte nächtlichen Background-Sync...")
         await _run_index_build()
+        await raumzeit.get_mensa_menu() # Proaktives Caching
+        log.info("Nächtlicher Sync abgeschlossen.")
+
         await _run_lecturer_build()
 
 async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
