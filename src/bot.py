@@ -773,7 +773,24 @@ async def main_async() -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(_error_handler)
 
-    await app.initialize(); await app.start(); await app.updater.start_polling()
+    # Bot initialisieren mit Retry-Logik für Robustheit bei schlechter Verbindung
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            await app.initialize()
+            await app.start()
+            await app.updater.start_polling()
+            log.info("Bot erfolgreich gestartet und verbunden.")
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait = (attempt + 1) * 5
+                log.warning("Fehler beim Bot-Start (Versuch %d/%d): %s. Neustart in %ds...", 
+                            attempt + 1, max_retries, e, wait)
+                await asyncio.sleep(wait)
+            else:
+                log.error("Bot-Start nach %d Versuchen endgültig fehlgeschlagen: %s", max_retries, e)
+                raise
     
     if not IS_DAEMON:
         # Dashboard nur im interaktiven Modus
