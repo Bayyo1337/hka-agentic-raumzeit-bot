@@ -737,6 +737,9 @@ async def _post_init(app) -> None:
     if raumzeit.lecturers_stale(): asyncio.create_task(_run_lecturer_build())
     else: raumzeit.load_lecturers()
     
+    # Proaktiver Mensa-Sync bei Start
+    asyncio.create_task(raumzeit.get_mensa_menu())
+    
     # Hintergrund-Tasks starten
     asyncio.create_task(_weekly_lecturer_refresh())
     asyncio.create_task(_background_sync_scheduler())
