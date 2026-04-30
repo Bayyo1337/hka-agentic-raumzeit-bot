@@ -1,7 +1,7 @@
 import fitz  # PyMuPDF
 
 def analyze_red_buildings():
-    doc = fitz.open("HKA_Lageplan_A4.pdf")
+    doc = fitz.open("assets/HKA_Lageplan_A4.pdf")
     page = doc[0]
     
     # Wir suchen nach Pfaden (Vektorgrafiken)

@@ -11,7 +11,7 @@ run:
 	@uv run python -m src.bot
 
 check:
-	uv run python scripts/check.py
+	uv run python scripts/setup/check.py
 
 test-e2e:
 	PYTHONPATH=. uv run pytest tests/test_e2e.py -v
