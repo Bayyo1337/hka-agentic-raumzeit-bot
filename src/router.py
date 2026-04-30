@@ -42,7 +42,7 @@ class Router:
             (r"(?i)\b(allergene|zusatzstoffe|vegan|vegetarisch)\b", "mensa_details", "agent_flow"),
             (r"(?i)\b(wo ist|weg zu|lageplan|gebäude|raum finden|wo finde ich|stockwerk|etage)\b", "campus_map", "agent_flow"),
             (r"(?i)\b(semesterzeiten|vorlesungsfreie zeit|prüfungszeit)\b", "university_calendar", "direct_tool"),
-
+            (r"(?i)(überschneidung|konflikt|kollision|gleichzeitig)", "conflict_analysis", "agent_flow"),
         ]
 
     def _fast_path(self, text: str) -> Optional[RouterOutput]:
@@ -75,7 +75,7 @@ Verfügbare Intents:
 - mensa_details: Fragen nach Allergenen, Preisen oder Zusatzstoffen für ein bestimmtes Gericht/Linie.
 - campus_map: Fragen nach dem Weg, Lageplänen oder Gebäuden.
 - university_calendar: Fragen nach Semesterzeiten, Prüfungsphasen oder Ferien.
-- conflict_analysis: Fragen nach Überschneidungen im Stundenplan.
+- conflict_analysis: Fragen nach Überschneidungen im Stundenplan. WICHTIG: Wenn Studiengang (z.B. Maschinenbau) und zwei Semesterzahlen genannt werden, ist KEINE Klärung nötig. Nutze agent_flow!
 - smalltalk_fallback: Für Smalltalk oder falls nichts anderes passt.
 
 Gib nur ein JSON-Objekt im angegebenen Schema zurück.

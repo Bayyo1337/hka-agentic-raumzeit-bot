@@ -216,21 +216,21 @@ Um die Qualitätssicherung tagesaktuell zu gestalten und den Bot-Start zu beschl
 
 # Session Log - 30.04.2026
 
-## Task: Konfliktanalyse-Härtung (LLM-Guidance)
-Das LLM zögerte bei einfachen Konflikt-Anfragen und forderte unnötigerweise weitere Informationen (Module) an, obwohl Kurs und Semester bereits bekannt waren.
+## Task: Router-Härtung (Conflict Prevention)
+Trotz Agent-Fixes blockierte der Router Anfragen durch unnötige "ask_clarification" Strategien.
 
 ### Changes
-- **src/agent.py**:
-    - `conflict_analysis` Instruktion massiv verschärft: Verbot von Rückfragen nach Modulen, Befehl zum kompletten Semestervergleich bei Fehlen eines Filters.
-- **src/tools.py**:
-    - `find_timetable_conflicts` Tool-Beschreibung präzisiert: Expliziter Hinweis auf die Optionalität des `module_filter` und die Durchführung des Gesamtvergleichs.
+- **src/router.py**:
+    - Fast-Path Heuristik hinzugefügt: Keywords wie "überschneidung", "konflikt" etc. führen nun sofort zum `agent_flow`.
+    - LLM-Instruktion geschärft: Explizites Verbot von Klärungsanfragen bei Konfliktanfragen mit Kurs + Semester.
 
 ### Validation
-- **Logic**: `scripts/repro_conflict_logic.py` bestätigte den sofortigen Tool-Call ohne Rückfragen bei einer Standard-Anfrage.
+- **Unit**: `scripts/test_router_conflict.py` bestätigte sowohl Fast-Path Hit als auch erfolgreiche LLM-Entscheidung ohne Klärung.
 - **Syntax**: `py_compile` erfolgreich.
 
 ### Git
 - Commit: (steht aus)
+
 
 
 
