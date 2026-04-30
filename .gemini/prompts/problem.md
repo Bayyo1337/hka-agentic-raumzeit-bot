@@ -1,35 +1,25 @@
-# Problem: Mensa-Allergen-Abfrage schlägt bei Kaltstart fehl
+# Problem: Fehlerhafte Extraktion von Dozenten-Kürzeln
 
 ## Hintergrund & Motivation
-Nutzer erhalten einen Fehler ("Bitte frage erst nach dem Menü"), wenn sie als allererstes nach Allergenen fragen. Mein erster Fix hat zwar `get_mensa_menu` aufgerufen, aber danach wurde die Suche nicht korrekt wiederholt. Zudem wurden API-Fehler verschluckt.
+Wenn das LLM IDs halluziniert (z. B. `offer0001` für Offermann), schneidet der Bot aktuell den ersten Buchstaben ab (`ffer0001`), weil die Regex `[a-z]{4}\d{4}` unpräzise ist. Dies führt zu Verwirrung und verhindert einen sauberen Fallback auf die Namenssuche.
 
 ## Ursachenanalyse / Ist-Zustand
-In `get_mensa_meal_details`:
-1. Wenn die DB leer ist, wird `get_mensa_menu()` aufgerufen.
-2. Danach wird zwar `today_meals` neu geladen, aber die UUID-Prüfung (Schritt 2/3) wird nicht wiederholt.
-3. Falls `get_mensa_menu()` einen Fehler zurückgibt (z.B. API-Timeout), wird dieser ignoriert und am Ende die generische Fehlermeldung "Bitte frage erst nach dem Menü" ausgegeben.
+- **Regex-Fehler:** `re.search(r'([a-z]{4}\d{4})', q_lower)` findet in `offer0001` den Teilstring `ffer0001`, da er genau 4 Buchstaben gefolgt von 4 Ziffern enthält.
+- **Folge:** Da `ffer0001` nicht im Index ist, schlägt der gesamte Prozess fehl, anstatt auf die Suche nach dem Namen "Offermann" zurückzufallen.
 
 ## Lösungsvorschlag
-1. **Zweistufiger Prozess:** 
-   - Stufe 1: Falls DB leer ist -> `get_mensa_menu()` rufen.
-   - Falls dieses fehlschlägt -> API-Fehler zurückgeben.
-   - Stufe 2: Falls erfolgreich -> `get_mensa_meal_details` rekursiv aufrufen (mit einem Flag `is_retry=True`), um den gesamten Suchvorgang inklusive RAM- und DB-Checks sauber zu wiederholen.
-2. **Synchronisierung:** Beibehaltung des `_MENSA_LOCK`, um Mehrfach-Aufrufe der API zu vermeiden.
+1. **Regex-Härtung:** Die Regex muss sicherstellen, dass vor den 4 Buchstaben kein weiterer Buchstabe steht. Nutzung von `(?<![a-z])` (Lookbehind) oder Wortgrenzen.
+2. **Präzisierung:** Umstellung auf `re.search(r'\b([a-z]{4}\d{4})\b', q_lower)`, um sicherzustellen, dass nur exakte Kürzel gematcht werden.
+3. **LLM-Guidance:** Anpassung der `TOOL_DEFINITIONS`, um dem LLM explizit zu verbieten, Kürzel zu raten.
 
 ## Umsetzungsschritte
 
 ### 1. `src/tools.py`
-- Überarbeitung von `get_mensa_meal_details(meal_id, is_retry=False)`:
-  - Zuerst RAM-Check.
-  - Dann DB-UUID-Check.
-  - Falls nichts gefunden und `not is_retry`:
-    - Lock erwerben.
-    - Prüfen ob DB immer noch leer.
-    - Falls ja: `await get_mensa_menu()` ausführen.
-    - Falls API-Fehler -> diesen zurückgeben.
-    - Falls Erfolg -> `return await get_mensa_meal_details(meal_id, is_retry=True)`.
-  - Erst danach Fallback-Logiken (Line-Match, Fuzzy-Name).
+- In `_resolve_account` (um Zeile 300):
+  - Ändere `re.search(r'([a-z]{4}\d{4})', q_lower)` zu `re.search(r'\b([a-z]{4}\d{4})\b', q_lower)`.
+- In `TOOL_DEFINITIONS`:
+  - `get_lecturer_timetable`: "WICHTIG: Nutze den Namen des Dozenten. Rate NIEMALS Kürzel!"
 
 ## Verifizierung & Testing
-1. Ausführen von `scripts/repro_mensa_coldstart.py`. Es sollte nun (bei API-Fehlern) den API-Fehler zeigen oder (bei Erfolg) das Gericht finden.
-2. Manueller Test: Erstabfrage eines Gerichts.
+1. Ausführen des korrigierten `scripts/repro_lecturer_id.py`. Es darf kein Match für `offer0001` mehr finden.
+2. Test mit echtem Namen "Offermann" muss weiterhin funktionieren.

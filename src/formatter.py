@@ -7,6 +7,13 @@ from datetime import date as _date
 
 _WEEKDAY_DE = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
 
+def _esc(text: str) -> str:
+    """Maskiert Markdown-Sonderzeichen für Telegram (Legacy Markdown)."""
+    if not text:
+        return ""
+    # In Legacy Markdown sind vor allem *, _, ` und [ problematisch
+    return str(text).replace("_", "\\_").replace("*", "\\*").replace("`", "\\`").replace("[", "\\[")
+
 # Tools die nur als Zwischenschritt dienen (kein eigenes Format nötig)
 _LOOKUP_TOOLS = {"get_courses_of_study", "get_all_rooms", "get_departments"}
 
@@ -160,9 +167,9 @@ def _render_timeline(bookings: list[dict], day_label: str = "", header_prefix: s
             cancelled = True
         
         if module and module != course_code:
-            label = f"*({course_code})* {module}"
+            label = f"*({_esc(course_code)})* {_esc(module)}"
         else:
-            label = f"*{course_code}*"
+            label = f"*{_esc(course_code)}*"
 
         if lecturer:
             from src.tools import _LECTURERS
@@ -170,14 +177,13 @@ def _render_timeline(bookings: list[dict], day_label: str = "", header_prefix: s
             for k in str(lecturer).split(", "):
                 k = k.strip()
                 if k in _LECTURERS:
-                    resolved.append(_LECTURERS[k].get("name", k))
+                    resolved.append(_esc(_LECTURERS[k].get("name", k)))
                 else:
-                    resolved.append(k)
+                    resolved.append(_esc(k))
             label += f" ({', '.join(resolved)})"
 
         if room and not header_prefix.startswith("🏫"):
-            label += f" 🏫 {room}"            
-
+            label += f" 🏫 {_esc(room)}"
         time_range = f"{_to_hhmm(b.get('start', ''))}–{_to_hhmm(b.get('end', ''))}"
         if cancelled:
             lines.append(f"❌ ~{time_range} {label}~ (FÄLLT AUS)")
@@ -258,21 +264,21 @@ def _fmt_course(result: dict) -> str:
         gruppe = b.get("gruppe", course)
         by_date[date_str][gruppe].append(b)
 
-    lines = [f"📅 *Stundenplan {course}*"]
+    lines = [f"📅 *Stundenplan {_esc(course)}*"]
     for date_str in sorted(by_date):
         date_label = _fmt_date(date_str) if date_str else "Unbekanntes Datum"
         lines.append(f"\n*{date_label}*")
         for gruppe in sorted(by_date[date_str]):
             gruppe_bookings = sorted(by_date[date_str][gruppe], key=lambda b: b.get("start", ""))
             if len(by_date[date_str]) > 1:
-                lines.append(f"  _{gruppe}_")
+                lines.append(f"  _{_esc(gruppe)}_")
             for b in gruppe_bookings:
                 start = _to_hhmm(b.get("start", ""))
                 end = _to_hhmm(b.get("end", ""))
                 name = b.get("name", "")
                 room = b.get("room", "")
-                room_suffix = f" 🏫{room}" if room else ""
-                lines.append(f"  {start}–{end} {name}{room_suffix}")
+                room_suffix = f" 🏫{_esc(room)}" if room else ""
+                lines.append(f"  {start}–{end} {_esc(name)}{room_suffix}")
 
     return "\n".join(lines)
 
@@ -289,16 +295,16 @@ def _fmt_lecturer(result: dict) -> str:
     room = result.get("room")
 
     date_label = _fmt_date(queried_date) if queried_date and queried_date != "heute" else queried_date
-    header = f"👤 *Stundenplan {lecturer}*" + (f" – {date_label}" if date_label else "")
+    header = f"👤 *Stundenplan {_esc(lecturer)}*" + (f" – {date_label}" if date_label else "")
 
     if not bookings:
         lines = [header]
         if email:
-            lines.append(f"📧 {email}")
+            lines.append(f"📧 {_esc(email)}")
         if sprechzeit:
-            lines.append(f"🕒 *Sprechzeit:* {sprechzeit}")
+            lines.append(f"🕒 *Sprechzeit:* {_esc(sprechzeit)}")
         if room:
-            lines.append(f"🏫 *Büro:* {room}")
+            lines.append(f"🏫 *Büro:* {_esc(room)}")
         lines.append("\nKeine Einträge für heute gefunden. An welchem Tag suchst du?")
         return "\n".join(lines)
 
@@ -321,11 +327,11 @@ def _fmt_lecturer(result: dict) -> str:
     all_lines = []
     if email or sprechzeit or room:
         if email:
-            all_lines.append(f"📧 {email}")
+            all_lines.append(f"📧 {_esc(email)}")
         if sprechzeit:
-            all_lines.append(f"🕒 *Sprechzeit:* {sprechzeit}")
+            all_lines.append(f"🕒 *Sprechzeit:* {_esc(sprechzeit)}")
         if room:
-            all_lines.append(f"🏫 *Büro:* {room}")
+            all_lines.append(f"🏫 *Büro:* {_esc(room)}")
         all_lines.append("")
 
     total_days = len(sorted_days)
@@ -368,13 +374,13 @@ def _fmt_mensa(result: dict) -> str:
     date_str = _fmt_date(result.get("date", ""))
     
     if result.get("closed"):
-        return f"🍴 *{canteen}* – {date_str}\nDie Mensa ist an diesem Tag geschlossen oder es liegen keine Daten vor."
+        return f"🍴 *{_esc(canteen)}* – {date_str}\nDie Mensa ist an diesem Tag geschlossen oder es liegen keine Daten vor."
     
     meals = result.get("meals", [])
     if not meals:
-        return f"🍴 *{canteen}* – {date_str}\nAktuell kein Speiseplan verfügbar."
+        return f"🍴 *{_esc(canteen)}* – {date_str}\nAktuell kein Speiseplan verfügbar."
     
-    lines = [f"🍴 *{canteen}*", f"📅 {date_str}", ""]
+    lines = [f"🍴 *{_esc(canteen)}*", f"📅 {date_str}", ""]
     
     # Gruppieren nach Linie
     from collections import defaultdict
@@ -383,12 +389,12 @@ def _fmt_mensa(result: dict) -> str:
         lines_map[m.get("line", {}).get("name", "Diverses")].append(m)
         
     for line_name in sorted(lines_map.keys()):
-        lines.append(f"*{line_name}*")
+        lines.append(f"*{_esc(line_name)}*")
         for m in lines_map[line_name]:
             icon = "🌱" if m.get("isVegan") else ("🥕" if m.get("isVegetarian") else "🥩")
             price = m.get("price", {}).get("student")
             price_str = f" ({price:.2f}€)" if price else ""
-            lines.append(f"  {icon} {m['name']}{price_str}")
+            lines.append(f"  {icon} {_esc(m['name'])}{price_str}")
         lines.append("")
         
     lines.append("_Frage nach Details zu einem Gericht für Allergene._")
@@ -403,14 +409,14 @@ def _fmt_mensa_details(result: dict) -> str:
     allergens = result.get("allergens", [])
     additives = result.get("additives", [])
     
-    lines = [f"🍱 *{name}*", ""]
+    lines = [f"🍱 *{_esc(name)}*", ""]
     if allergens:
         lines.append("*Allergene:*")
-        lines.append(", ".join(allergens))
+        lines.append(", ".join(_esc(a) for a in allergens))
         lines.append("")
     if additives:
         lines.append("*Zusatzstoffe:*")
-        lines.append(", ".join(additives))
+        lines.append(", ".join(_esc(a) for a in additives))
         
     if not allergens and not additives:
         lines.append("Keine Allergene oder Zusatzstoffe gelistet.")
@@ -422,7 +428,7 @@ def _fmt_map(result: dict) -> str:
     building = result.get("building", "?")
     floor = result.get("floor", "unbekanntes Stockwerk")
     query = result.get("query", building)
-    return f"📍 *Lageplan für {query}*\n\nDas Gebäude *{building}* befindet sich auf dem Hauptcampus.\nEbene: *{floor}*"
+    return f"📍 *Lageplan für {_esc(query)}*\n\nDas Gebäude *{_esc(building)}* befindet sich auf dem Hauptcampus.\nEbene: *{_esc(floor)}*"
 
 
 def _fmt_list(result) -> str:
@@ -437,11 +443,11 @@ def _fmt_list(result) -> str:
             name = item.get("longName") or item.get("name", str(item))
             short = item.get("name", "")
             if short and short != name:
-                lines.append(f"• {name} ({short})")
+                lines.append(f"• {_esc(name)} ({_esc(short)})")
             else:
-                lines.append(f"• {name}")
+                lines.append(f"• {_esc(name)}")
         else:
-            lines.append(f"• {item}")
+            lines.append(f"• {_esc(item)}")
     if len(items) > 30:
         lines.append(f"… und {len(items) - 30} weitere")
     return "\n".join(lines)
@@ -463,11 +469,11 @@ def _fmt_calendar(result) -> str:
         if end:
             end = _date.fromisoformat(end[:10]) if len(end) >= 10 else end
         if start and end and start != end:
-            lines.append(f"• {name}: {start} – {end}")
+            lines.append(f"• {_esc(name)}: {start} – {end}")
         elif start:
-            lines.append(f"• {name}: {start}")
+            lines.append(f"• {_esc(name)}: {start}")
         else:
-            lines.append(f"• {name}")
+            lines.append(f"• {_esc(name)}")
     return "\n".join(lines)
 
 
@@ -510,10 +516,10 @@ def _fmt_conflicts(result: dict) -> str:
             g = b.get("gruppe").split(".")[-1] if b.get("gruppe") and "." in b.get("gruppe") else b.get("gruppe")
             dedup[key]["gruppen"].add(g)
 
-    lines = [f"⚠️ *Konflikt-Analyse: {course}*"]
+    lines = [f"⚠️ *Konflikt-Analyse: {_esc(course)}*"]
     lines.append(f"Vergleich: Semester {base_sem} ↔️ Semester {target_sem}")
     if module_filter:
-        lines.append(f"Filter: \"{module_filter}\"")
+        lines.append(f"Filter: \"{_esc(module_filter)}\"")
     lines.append("")
     
     # 3. Gruppieren nach Wochentag

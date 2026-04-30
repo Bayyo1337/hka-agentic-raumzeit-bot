@@ -212,22 +212,29 @@ Um die Qualitätssicherung tagesaktuell zu gestalten und den Bot-Start zu beschl
 - **Bot**: Syntax-Check erfolgreich.
 
 ### Git
-- Commit: (steht aus)
+- Commit: `3ef78b3`
 
 # Session Log - 30.04.2026
 
-## Task: Mensa-Allergen Kaltstart-Fix
-Nutzer erhielten eine irreführende Fehlermeldung ("Bitte frage erst nach dem Menü"), wenn sie als allererstes nach Allergenen fragten. Der bisherige Warming-Mechanismus war unvollständig.
+## Task: Markdown-Fix (Can't parse entities)
+Der Bot meldete Netzwerkfehler beim `/admin` Kommando und bei Stundenplan-Ausgaben, da Sonderzeichen (insb. `_`) in Namen oder Modulen das Telegram-Markdown zerstörten.
 
 ### Changes
-- **src/tools.py**:
-    - `get_mensa_meal_details` umgebaut: Nutzt nun einen rekursiven Aufruf nach dem Auto-Warming, um alle Caches (RAM/DB) erneut zu prüfen.
-    - API-Fehler während des Warmings werden nun transparent an den Nutzer kommuniziert, anstatt sie zu verschlucken.
+- **src/formatter.py**:
+    - `_esc` Hilfsfunktion hinzugefügt, um `_`, `*`, `` ` `` und `[` zu maskieren.
+    - Anwendung von `_esc` auf Modulnamen, Dozenten, Räume und Kurs-Keys in `_render_timeline` und `_fmt_conflicts`.
+- **src/admin.py**:
+    - `escape_markdown` aus `telegram.helpers` importiert.
+    - Anwendung von `escape_markdown(..., version=1)` in `cmd_admin`, `cmd_user` und `cmd_rooms` auf alle dynamischen Texte (Usernamen, Provider, Raumnamen).
 
 ### Validation
-- **Coldstart**: `scripts/repro_mensa_coldstart.py` bestätigt, dass nun die echte Fehlerursache (z.B. API nicht erreichbar) gemeldet wird oder das Gericht bei Erfolg gefunden wird.
 - **Syntax**: `py_compile` erfolgreich.
+- **Logik**: Manuelle Prüfung der betroffenen Stellen auf fehlende Maskierung.
 
 ### Git
 - Commit: (steht aus)
+
+
+
+
 
