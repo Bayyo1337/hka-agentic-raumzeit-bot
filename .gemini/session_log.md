@@ -189,22 +189,30 @@ Die Mensa-API liefert Allergene und Zusatzstoffe nur als technische Kürzel (z.B
 
 # Session Log - 23.04.2026
 
-## Task: Mensa-Allergen-Fix (Auto-Warming & Sync)
-Nutzer konnten Allergene oft nicht abfragen, wenn der Cache noch leer war oder Race Conditions bei parallelen Tool-Calls auftraten.
+## Task: Dynamisches E2E-System & Proaktiver Bot-Sync
+Um die Qualitätssicherung tagesaktuell zu gestalten und den Bot-Start zu beschleunigen, wurde ein hybrides System für Tests und Bot-Betrieb eingeführt.
 
 ### Changes
-- **src/tools.py**:
-    - `_MENSA_LOCK` eingeführt, um parallele API-Zugriffe zu synchronisieren.
-    - `get_mensa_meal_details` erweitert: Falls die DB für heute leer ist, wird `get_mensa_menu()` automatisch aufgerufen (Auto-Warming).
-    - `get_mensa_menu` mit Lock abgesichert.
-    - Indentation-Fixes für synchronisierte Blöcke.
+- **src/db.py**:
+    - `clear_mensa_cache()` implementiert, um Test-Isolation zu ermöglichen.
+- **src/bot.py**:
+    - Nächtlicher Mensa-Sync (04:00 Uhr) in den Background-Scheduler integriert.
+- **scripts/generate_e2e_fixtures.py**:
+    - Neues Skript zur Erzeugung von Test-Cases basierend auf den echten Gerichten des Tages.
+- **tests/test_e2e.py**:
+    - Automatischer Kaltstart-Zwang vor jedem Testlauf.
+    - Integration der dynamischen Fixtures.
+- **Makefile**:
+    - Target `test-e2e-dynamic` für den vollen Validierungs-Zyklus hinzugefügt.
 
 ### Validation
-- **Logic**: `scripts/repro_mensa_no_menu.py` bestätigt, dass Details nun auch bei komplett leerer Datenbank im ersten Anlauf geladen werden.
-- **Syntax**: `py_compile` erfolgreich.
+- **Logic**: `make test-e2e-dynamic` bestätigte:
+    1. Korrekte Generierung der tagesaktuellen Test-Cases.
+    2. Funktionsfähigkeit der Auto-Warming-Logik trotz zwangsgeleertem Cache.
+- **Bot**: Syntax-Check erfolgreich.
 
 ### Git
-- Commit: `f3bc11f`
+- Commit: (steht aus)
 
 # Session Log - 30.04.2026
 
