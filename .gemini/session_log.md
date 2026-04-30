@@ -216,18 +216,21 @@ Um die Qualitätssicherung tagesaktuell zu gestalten und den Bot-Start zu beschl
 
 # Session Log - 30.04.2026
 
-## Task: Mensa-Allergen Kaltstart-Fix
-Nutzer erhielten eine irreführende Fehlermeldung ("Bitte frage erst nach dem Menü"), wenn sie als allererstes nach Allergenen fragten. Der bisherige Warming-Mechanismus war unvollständig.
+## Task: Prompt-Präzisierung & Dozenten-Fixes
+Die KI lieferte bei komplexen Konflikt-Anfragen fälschlicherweise einen "Kein Kurs hinterlegt" Fehler. Zudem gab es einen Bug bei der Extraktion von Dozenten-Kürzeln.
 
 ### Changes
+- **src/agent.py**:
+    - System-Prompt geschärft: Die Regel für `no_course` (persönlicher Plan) wurde so präzisiert, dass sie nicht mehr bei expliziten Kursabfragen greift, selbst wenn kein Nutzerprofil vorhanden ist.
 - **src/tools.py**:
-    - `get_mensa_meal_details` umgebaut: Nutzt nun einen rekursiven Aufruf nach dem Auto-Warming, um alle Caches (RAM/DB) erneut zu prüfen.
-    - API-Fehler während des Warmings werden nun transparent an den Nutzer kommuniziert, anstatt sie zu verschlucken.
+    - `_resolve_account` (Dozenten): Regex gehärtet (`\b` Wortgrenzen hinzugefügt), um zu verhindern, dass bei halluzinierten IDs wie `offer0001` fälschlicherweise `ffer0001` extrahiert wird.
+    - `get_lecturer_timetable` Beschreibung im OpenAI-Schema präzisiert: Verbot des Kürzels-Ratens explizit formuliert.
 
 ### Validation
-- **Coldstart**: `scripts/repro_mensa_coldstart.py` bestätigt, dass nun die echte Fehlerursache (z.B. API nicht erreichbar) gemeldet wird oder das Gericht bei Erfolg gefunden wird.
-- **Syntax**: `py_compile` erfolgreich.
+- **Dozenten**: `scripts/repro_lecturer_id.py` bestätigte, dass falsche Teil-Kürzel nicht mehr extrahiert werden.
+- **Prompting**: Logische Prüfung der neuen Instruktions-Kette.
 
 ### Git
 - Commit: (steht aus)
+
 

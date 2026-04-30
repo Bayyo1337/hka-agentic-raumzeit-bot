@@ -295,7 +295,7 @@ def resolve_lecturer(query: str) -> tuple[str, str | None]:
             return q_norm, _beautify(info["name"])
     
     # Kürzel irgendwo im String? (z.B. "fedi0001 (Prof. Feßler)")
-    match = re.search(r'([a-z]{4}\d{4})', q_lower)
+    match = re.search(r'\b([a-z]{4}\d{4})\b', q_lower)
     if match:
         kuerzel = match.group(1)
         info = _LECTURERS.get(kuerzel)
@@ -1321,13 +1321,13 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_lecturer_timetable",
-            "description": "Gibt den Stundenplan eines Dozenten anhand seines HKA-Accounts zurück.",
+            "description": "Holt den persönlichen Stundenplan eines Dozenten. WICHTIG: Nutze den vollständigen Namen des Dozenten (z.B. 'Masha Taheran'). Rate NIEMALS Kürzel wie 'tama0001'!",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "account": {
                         "type": "string",
-                        "description": "Account/Kürzel des Dozenten, z.B. 'muster'.",
+                        "description": "Vollständiger Name des Dozenten oder Nachname. Rate keine Kürzel!",
                     },
                     "date": {
                         "type": "string",

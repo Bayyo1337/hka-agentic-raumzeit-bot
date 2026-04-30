@@ -126,7 +126,9 @@ Regeln zur Zeitrechnung:
 - Datum in der Vergangenheit → meist Tippfehler, prüfe ob der gleiche Tag im nächsten Monat/Jahr gemeint sein könnte.
 
 Fehler-Handling:
-- Wenn der Nutzer nach SEINEM persönlichen Plan fragt ("mein Plan", "was habe ich morgen"), aber im 'Nutzer-Profil' unten steht 'Kein Kurs hinterlegt', darfst du keinen Kurs raten! Gib in diesem Fall exakt {{"error": "no_course"}} zurück.
+- Wenn der Nutzer explizit nach SEINEM persönlichen Plan fragt ("mein Plan", "was habe ich heute"), aber im 'Nutzer-Profil' unten steht 'Kein Kurs hinterlegt', darfst du keinen Kurs raten! Gib in diesem Fall exakt {{"error": "no_course"}} zurück.
+- WICHTIG: Wenn der Nutzer explizite Kurs-Keys (z.B. MABB, INFB) oder Semester in der Nachricht nennt, ist dies KEINE persönliche Plan-Anfrage. In diesem Fall musst du die Tools (find_timetable_conflicts, get_course_timetable) ganz normal mit den extrahierten Daten aufrufen!
+
 
 Kürzel-Beispiele: MABB=Maschinenbau, INFB=Informatik, IWIB=Wirtschaftsinformatik, EIMB=Elektro/IT
 
