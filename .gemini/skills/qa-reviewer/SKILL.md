@@ -17,7 +17,10 @@ Lies das `.gemini/session_log.md`, um den Kontext der Änderungen zu verstehen.
 
 ### 2. Finale Integrationstests
 Führe das gesamte Test-Set aus, um sicherzustellen, dass keine Regressionen entstanden sind:
-- **E2E-Tests:** Führe `make test-e2e` aus. Schlagen Tests fehl, darf nicht committet werden!
+- **E2E-Tests:** Führe `make test-e2e` aus. Schlagen Tests fehl:
+    - Analysiere den Output: Welches Keyword fehlt? Welches Tool wurde falsch gerufen?
+    - Erstelle einen kurzen Report im `session_log.md` über den Fehlschlag.
+    - Committe keinesfalls, bevor alle 9+ Cases grün sind.
 - `make check` oder `make test` (falls vorhanden).
 - Führe das `scripts/repro_issue.py` ein letztes Mal aus (falls es sich um einen Bugfix handelt).
 - Prüfe auf Linting-Fehler: `uv run ruff check .`.
@@ -42,6 +45,7 @@ Falls dir ein Issue-Dateipfad (aus `issues/active/`) übergeben wurde:
 #### B: Für Features (Implementierung)
 Falls dir ein Spec-Dateipfad (aus `features/specs/`) übergeben wurde:
 - Schreibe eine Zusammenfassung der Lösung ans Ende dieser Datei.
+- **E2E-Suite Update:** Prüfe, ob für dieses Feature ein neuer Test-Case in `tests/fixtures/e2e_cases.json` sinnvoll ist. Falls ja: Ergänze ihn.
 - Erstelle den Zielordner: `mkdir -p features/done`
 - Verschiebe die Datei: `mv "features/specs/<DATEI>" features/done/`
 
@@ -52,6 +56,7 @@ Nach dem erfolgreichen Commit und der Dokumentation:
 - Falls der Push fehlschlägt (z.B. wegen fehlender Berechtigungen oder nötigen Pulls): Dokumentiere den Fehler im `session_log.md` und informiere den Nutzer, aber brich die Session nicht mit einem harten Fehler ab (der Commit ist ja bereits erfolgt).
 
 ## Wichtige Mandate
+- **E2E-Hoheit:** Du bist für die Aktualität der `tests/fixtures/e2e_cases.json` verantwortlich. Jedes neue Feature braucht einen Case.
 - **Unabhängigkeit:** Sei kritisch gegenüber den Änderungen des Fixers.
 - **Vollständigkeit:** Committe nur, wenn alle Tests (Logik, Syntax, Style) grün sind.
 - **Sauberkeit:** Keine temporären Dateien (`repro_issue.py`) committen.

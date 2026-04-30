@@ -165,7 +165,7 @@ Nutzer erhielten Fehlermeldungen bei Allergen-Abfragen, da das LLM IDs wie `wahl
 - **Syntax**: `py_compile` erfolgreich.
 
 ### Git
-- Commit: (steht aus)
+- Commit: `f3bc11f`
 
 
 
@@ -204,4 +204,22 @@ Nutzer konnten Allergene oft nicht abfragen, wenn der Cache noch leer war oder R
 - **Syntax**: `py_compile` erfolgreich.
 
 ### Git
+- Commit: `f3bc11f`
+
+# Session Log - 30.04.2026
+
+## Task: Mensa-Allergen Kaltstart-Fix
+Nutzer erhielten eine irreführende Fehlermeldung ("Bitte frage erst nach dem Menü"), wenn sie als allererstes nach Allergenen fragten. Der bisherige Warming-Mechanismus war unvollständig.
+
+### Changes
+- **src/tools.py**:
+    - `get_mensa_meal_details` umgebaut: Nutzt nun einen rekursiven Aufruf nach dem Auto-Warming, um alle Caches (RAM/DB) erneut zu prüfen.
+    - API-Fehler während des Warmings werden nun transparent an den Nutzer kommuniziert, anstatt sie zu verschlucken.
+
+### Validation
+- **Coldstart**: `scripts/repro_mensa_coldstart.py` bestätigt, dass nun die echte Fehlerursache (z.B. API nicht erreichbar) gemeldet wird oder das Gericht bei Erfolg gefunden wird.
+- **Syntax**: `py_compile` erfolgreich.
+
+### Git
 - Commit: (steht aus)
+

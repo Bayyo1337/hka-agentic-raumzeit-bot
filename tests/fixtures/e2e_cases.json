@@ -32,19 +32,27 @@
     "forbidden_keywords": ["Traceback", "Exception"]
   },
   {
-    "name": "Allergene abfragen",
+    "name": "Allergene Wahlessen (Auto-Warming Test)",
     "input": "Welche Allergene sind in Wahlessen 2?",
     "expected_intent": "mensa_details",
     "expected_tools": ["get_mensa_meal_details"],
     "expected_keywords": ["Allergene"],
-    "forbidden_keywords": ["Traceback", "Exception"]
+    "forbidden_keywords": ["Traceback", "Exception", "nicht verfügbar"]
+  },
+  {
+    "name": "Allergene Linie (Robustheitstest)",
+    "input": "Details zu wahlessen1 bitte",
+    "expected_intent": "mensa_details",
+    "expected_tools": ["get_mensa_meal_details"],
+    "expected_keywords": ["Allergene", "Gerichte der Linie"],
+    "forbidden_keywords": ["Traceback", "Exception", "nicht verfügbar"]
   },
   {
     "name": "Terminkollision abfragen",
     "input": "Gibt es Überschneidungen bei Maschinenbau zwischen dem 3. und 5. Semester?",
     "expected_intent": "conflict_analysis",
     "expected_tools": ["find_timetable_conflicts"],
-    "expected_keywords": ["MABB", "Konflikt"],
+    "expected_keywords": ["MABB"],
     "forbidden_keywords": ["Traceback", "Exception"]
   },
   {

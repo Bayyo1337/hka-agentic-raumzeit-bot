@@ -32,8 +32,6 @@ import pytest_asyncio
 async def setup_test_db():
     await db.init()
     await db.upsert_user(12345, "testuser", "Test User")
-    # Mensa-Daten für heute laden, damit Allergen-Tests nicht fehlschlagen
-    await tools.get_mensa_menu()
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", test_cases, ids=lambda c: c["name"])

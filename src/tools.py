@@ -1139,7 +1139,7 @@ async def _fetch_canteens_raw():
         data = r.json()
         return (data.get("data") or {}).get("getCanteens", [])
 
-async def get_mensa_meal_details(meal_id: str) -> dict:
+async def get_mensa_meal_details(meal_id: str, is_retry: bool = False) -> dict:
     """Holt Allergene und Zusatzstoffe für ein spezifisches Gericht."""
     # 1. Schneller RAM-Check (ohne Lock)
     if meal_id in _MEALS_CACHE:
@@ -1158,35 +1158,43 @@ async def get_mensa_meal_details(meal_id: str) -> dict:
         except Exception as e:
             log.warning("Mensa-DB: Fehler bei ID-Lookup: %s", e)
 
-        # 4. Kaltstart-Check: Haben wir überhaupt Daten für heute?
-        try:
-            today_meals = await db.get_mensa_meals_for_day(_date.today().isoformat())
-            if not today_meals:
-                log.info("Mensa-Cache leer für heute. Starte Auto-Warming...")
-                # WICHTIG: get_mensa_menu nutzt den gleichen Lock, wir müssen also 
-                # eine interne Version rufen oder den Lock kurz freigeben.
-                # Da get_mensa_menu selbst den Lock nutzt, rufen wir es OHNE Lock auf, 
-                # indem wir den aktuellen Kontext kurz verlassen.
-        except Exception:
-            today_meals = []
+        # 4. Kaltstart-Check: Haben wir Daten für heute? Falls nein: Warming.
+        if not is_retry:
+            try:
+                today_meals = await db.get_mensa_meals_for_day(_date.today().isoformat())
+                if not today_meals:
+                    log.info("Mensa-Cache leer für heute. Starte Auto-Warming...")
+                    # Lock kurz verlassen, da get_mensa_menu selbst den Lock nutzt
+                    pass # Placeholder für Lock-Release Logik unten
+            except Exception:
+                pass
 
-    if not today_meals:
-        # Erneuter Versuch ohne Lock (get_mensa_menu setzt eigenen Lock)
-        await get_mensa_menu()
-        # Nach dem Warming erneut mit Lock rein
-        async with _MENSA_LOCK:
-            today_meals = await db.get_mensa_meals_for_day(_date.today().isoformat())
+    # Auto-Warming außerhalb des ersten Locks (get_mensa_menu verwaltet eigenen Lock)
+    if not is_retry:
+        try:
+            # Check erneut ob DB leer ist
+            if not await db.get_mensa_meals_for_day(_date.today().isoformat()):
+                res = await get_mensa_menu()
+                if "error" in res:
+                    return res # API Fehler direkt zurückgeben
+                # Rekursiver Aufruf: Jetzt sollte es im Cache sein
+                return await get_mensa_meal_details(meal_id, is_retry=True)
+        except Exception as e:
+            log.warning("Mensa-Warming fehlgeschlagen: %s", e)
 
     async with _MENSA_LOCK:
         # 5. Spezial-Fallback für LLM-Halluzinationen (Line/Kategorie)
         import re
+        def _norm_radical(s):
+            return re.sub(r'[^a-z0-9]', '', s.lower().replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss"))
+
         try:
-            q_norm_radical = re.sub(r'[^a-z0-9]', '', meal_id.lower().replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss"))
+            q_norm_radical = _norm_radical(meal_id)
             today_meals = await db.get_mensa_meals_for_day(_date.today().isoformat())
             
             if today_meals:
                 # 3a. Prüfe, ob die Anfrage exakt einem Linien-Namen entspricht (z.B. "Wahlessen 2")
-                line_meals = [m for m in today_meals if q_norm_radical == re.sub(r'[^a-z0-9]', '', m.get("line", {}).get("name", "").lower())]
+                line_meals = [m for m in today_meals if q_norm_radical == _norm_radical(m.get("line", {}).get("name", ""))]
                 
                 if line_meals:
                     # Kombiniere alle Gerichte dieser Linie
@@ -1209,9 +1217,9 @@ async def get_mensa_meal_details(meal_id: str) -> dict:
                 # 3b. Falls kein Line-Match, probiere Regex für "Kategorie + Index" (z.B. gut_günstig_1)
                 import re
                 if (pattern_match := re.match(r'^(.+?)[_ ]?([0-9]+)$', meal_id)):
-                    cat_query = pattern_match.group(1)
+                    cat_query = _norm_radical(pattern_match.group(1))
                     idx = int(pattern_match.group(2)) - 1 # 1-based to 0-based
-                    cat_meals = [m for m in today_meals if cat_query in re.sub(r'[^a-z0-9]', '', m.get("line", {}).get("name", "").lower())]
+                    cat_meals = [m for m in today_meals if cat_query in _norm_radical(m.get("line", {}).get("name", ""))]
                     if 0 <= idx < len(cat_meals):
                         target = cat_meals[idx]
                         log.info("Mensa-Detail: Pattern-Match für '%s' -> '%s' (ID: %s)", meal_id, target["name"], target["id"])
