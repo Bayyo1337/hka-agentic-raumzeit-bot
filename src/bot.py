@@ -91,88 +91,125 @@ _NEIN = {"nein", "ne", "n", "no", "falsch", "stimmt nicht", "stimmt nicht so", "
 _JA   = {"ja", "j", "yes", "y", "stimmt", "korrekt", "ok", "okay"}
 
 _USER_COMMANDS = [
-    BotCommand("start", "Einführung & Kurzhilfe"),
-    BotCommand("help", "Ausführliche Hilfe & Beispiele"),
-    BotCommand("bug", "Fehler melden oder Feedback geben"),
-    BotCommand("mensa", "Aktueller Speiseplan der Mensa Moltke"),
+    BotCommand("start", "Erste Schritte & Beispiele"),
+    BotCommand("help", "Alle Befehle & Hilfe"),
+    BotCommand("setcourse", "Studiengang & Filter einstellen"),
     BotCommand("myplan", "Dein persönlicher Stundenplan"),
-    BotCommand("setcourses", "Eigene Studiengänge & Filter verwalten"),
-    BotCommand("stats", "Nutzungsstatistik & Profil"),
-    BotCommand("reset", "Gesprächsverlauf löschen"),
+    BotCommand("mensa", "Speiseplan der Mensa Moltke"),
+    BotCommand("stats", "Dein Profil & Token-Verbrauch"),
+    BotCommand("bug", "Fehler melden / Feedback geben"),
+    BotCommand("reset", "KI-Gedächtnis löschen"),
 ]
 
 _ADMIN_COMMANDS = _USER_COMMANDS + [
     BotCommand("admin", "System- & Nutzerübersicht"),
     BotCommand("sync", "Datenbank-Abgleich mit HKA"),
-    BotCommand("togglepersonal", "Feature: Personalisierung an/aus"),
-    BotCommand("togglemap", "Feature: Lageplan an/aus"),
+    BotCommand("togglepersonal", "Feature: Personalisierung umschalten"),
+    BotCommand("togglemap", "Feature: Lageplan umschalten"),
     BotCommand("loglevel", "Logging-Detailtiefe ändern"),
     BotCommand("maintenance", "Wartungsmodus steuern"),
-    BotCommand("broadcast", "Nachricht an alle Nutzer"),
+    BotCommand("broadcast", "Nachricht an alle Nutzer senden"),
 ]
 
 def _is_allowed(user_id: int) -> bool:
     return not settings.allowed_ids or user_id in settings.allowed_ids
 
-def _command_help(is_admin: bool) -> str:
+def build_start_text() -> str:
+    """Erzeugt den Willkommenstext für /start."""
+    return (
+        "🏫 *Willkommen beim Raumzeit KI-Bot!*\n\n"
+        "Ich helfe dir bei Fragen rund um den Campus, Stundenpläne und die Mensa.\n\n"
+        "💡 *Frag mich einfach:*\n"
+        "• _\"Wann ist M-102 heute frei?\"_\n"
+        "• _\"Stundenplan MABB.2 am Dienstag\"_\n"
+        "• _\"Gibt es heute Pizza in der Mensa?\"_\n\n"
+        "🚀 *Erste Schritte:*\n"
+        "1️⃣ Nutze `/setcourse`, um dein Semester zu hinterlegen.\n"
+        "2️⃣ Frag mich: _\"Was habe ich heute?\"_\n\n"
+        "Nutze `/help` für die vollständige Befehlsreferenz.\n"
+        "📄 [Quellcode (AGPL-3.0)](https://github.com/Bayyo1337/hka-agentic-raumzeit-bot)"
+    )
+
+def build_help_text(is_admin: bool) -> str:
+    """Erzeugt die vollständige Hilfe-Referenz."""
     from src.state import _personal_features
+    
     lines = [
         "📖 *Raumzeit KI-Bot Hilfe*",
         "",
-        "Frag mich einfach in natürlicher Sprache. Beispiele:",
-        "• *Räume:* \"Wann ist M-102 heute frei?\" oder \"Wo ist Gebäude E?\"",
-        "• *Kurse:* \"Stundenplan MABB 2\" oder \"Was habe ich morgen?\"",
-        "• *Dozenten:* \"Sprechzeiten von Peter Offermann\"",
-        "• *Mensa:* \"Was gibt es heute zu essen?\" oder \"Allergene im Seelachs\"",
+        "Frag mich einfach in natürlicher Sprache. Ich verstehe Fragen zu Räumen, Kursen, Dozenten und der Mensa.",
         "",
-        "📜 *Benutzer-Befehle:*",
-        "/help – Diese Referenz anzeigen",
-        "/mensa – Heutiger Speiseplan (Moltke)",
-        "/bug – Fehler melden oder Feedback geben (interaktiv)",
-        "/reset – Aktuellen Gesprächskontext löschen",
-        "/stats – Deine Tokens und Limits einsehen",
+        "🔍 *Beispiele:*",
+        "• *Räume:* `Wann ist M-102 heute frei?` oder `Wo ist Gebäude E?`",
     ]
+    
     if _personal_features[0]:
-        lines.insert(-2, "/myplan – Deinen gespeicherten Wochenplan zeigen")
-        lines.insert(-2, "/setcourses – Deine Kurse & Filter verwalten (interaktiv)")
-        lines.insert(-2, "/setcourses add [Key] – Kurs direkt speichern (z.B. `/setcourses add MABB.7`) ")
+        lines.append("• *Kurse:* `Stundenplan MABB.3 am Dienstag` oder `Was habe ich morgen?` (erfordert `/setcourse`)")
+    else:
+        lines.append("• *Kurse:* `Stundenplan MABB.3 am Dienstag` oder `Was wird in M-102 gelehrt?`")
+        
+    lines += [
+        "• *Dozenten:* `Sprechzeiten von Peter Offermann`",
+        "• *Mensa:* `Was gibt es heute zu essen?` oder `Allergene im Seelachs`",
+        "• *Karten:* `Wo ist LI-146?` (sendet automatisch Lageplan)",
+        "",
+        "📜 *Basis-Befehle:*",
+        "`/help` – Diese Referenz anzeigen",
+        "`/mensa` – Heutiger Speiseplan (Moltke)",
+        "`/bug` – Fehler melden oder Feedback geben (interaktiv)",
+        "`/reset` – Aktuellen Gesprächskontext löschen",
+        "`/stats` – Deine Token-Verbrauch & gespeicherte Kurse",
+        "",
+    ]
+    
+    if _personal_features[0]:
+        lines += [
+            "🎓 *Studium & Personalisierung:*",
+            "Hinterlege deine Kurse, um Fragen wie _\"Was habe ich heute?\"_ zu nutzen.",
+            "`/setcourse` – Wizard starten (Fakultät → Studiengang → Semester)",
+            "`/setcourse add [KEY]` – Kurs direkt speichern (z.B. `/setcourse add MABB.3`)",
+            "`/setcourse list` – Deine gespeicherten Kurse anzeigen",
+            "`/setcourse clear` – Alle gespeicherten Kurse löschen",
+            "`/myplan` – Deinen persönlichen Wochenplan anzeigen",
+            "",
+        ]
+
+    lines += [
+        "ℹ️ *Troubleshooting:*",
+        "• *Keine Belegungen?* Prüfe, ob der Kurs-Key korrekt ist (z.B. `MABB.3`) oder ob Vorlesungsfreie Zeit ist.",
+    ]
+    
+    if is_admin:
+        lines.append("• *Falsche Infos?* Nutze `/sync` (Admins) oder melde es via `/bug`.")
+    else:
+        lines.append("• *Falsche Infos?* Melde es via `/bug` an das Entwickler-Team.")
+    
+    lines.append("")
 
     if is_admin:
         lines += [
-            "",
-            "🔧 *Admin-Befehle:*",
-            "/admin – Systemstatus & Nutzerstatistik",
-            "/sync [all|courses|lecturers] – Daten manuell abgleichen",
-            "/broadcast [Text] – Nachricht an alle Nutzer senden",
-            "/loglevel [DEBUG|INFO|WARNING] – Detailtiefe ändern",
-            "/togglepersonal – Feature 'Eigener Plan' an/aus",
-            "/togglemap – Feature 'Lagepläne' an/aus",
-            "/maintenance [Text] – Wartungsmodus (de)aktivieren",
+            "🔧 *Admin-Bereich:*",
+            "`/admin` – System-Dashboard & Nutzer-Statistik",
+            "`/sync [all|courses|lecturers]` – Daten manuell abgleichen",
+            "`/broadcast [Text]` – Nachricht an alle Nutzer senden",
+            "`/loglevel [DEBUG|INFO|WARNING]` – Detailtiefe der Logs ändern",
+            "`/maintenance [An|Aus]` – Wartungsmodus (de)aktivieren",
+            "`/togglepersonal` – Feature 'Persönlicher Plan' umschalten",
+            "`/togglemap` – Feature 'Lagepläne' umschalten",
         ]
+    
     return "\n".join(lines)
 
+def _command_help(is_admin: bool) -> str:
+    # Legacy wrapper for backward compatibility if needed, though we should move to build_help_text
+    return build_help_text(is_admin)
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     is_admin = admin._is_admin(update.effective_user.id)
-    await update.message.reply_text(_command_help(is_admin), parse_mode="Markdown")
-
+    await update.message.reply_text(build_help_text(is_admin), parse_mode="Markdown", disable_web_page_preview=True)
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    text = (
-        "🏫 *Willkommen beim Raumzeit KI-Bot!*\n\n"
-        "Ich helfe dir bei Fragen rund um den Campus, Stundenpläne und die Mensa.\n\n"
-        "💡 *So fragst du mich:*\n"
-        "Schreibe mir einfach eine Nachricht wie:\n"
-        "_\"Wo unterrichtet Prof. Offermann am Dienstag?\"_\n"
-        "_\"Welche Vorlesungen hat MABB Semester 2 morgen?\"_\n"
-        "_\"Was gibt es heute in der Mensa?\"_\n\n"
-        "Nutze `/help` für eine Liste aller Befehle.\n"
-        "Nutze `/setcourses`, um dein Studium für personalisierte Fragen zu hinterlegen.\n\n"
-        "📄 [Quellcode (AGPL-3.0)](https://github.com/Bayyo1337/hka-agentic-raumzeit-bot)"
-    )
-    msg = await update.message.reply_text(text, parse_mode="Markdown")
-    _bot_messages.setdefault(update.effective_chat.id, []).append(msg.message_id)
+    await update.message.reply_text(build_start_text(), parse_mode="Markdown", disable_web_page_preview=True)
 
 
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -206,7 +243,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except:
         courses = [course_raw] if course_raw else []
     
-    course_str = f"\n🎓 *Deine Kurse:* {', '.join([f'`{c}`' for c in courses])}" if courses else "\n🎓 *Deine Kurse:* Noch keine (nutze /setcourses)"
+    course_str = f"\n🎓 *Deine Kurse:* {', '.join([f'`{c}`' for c in courses])}" if courses else "\n🎓 *Deine Kurse:* Noch keine (nutze /setcourse)"
     
     await update.message.reply_text(
         f"📊 *Deine Statistik*{course_str}\n"
@@ -217,7 +254,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-async def cmd_setcourses(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_setcourse(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Verwaltet die gespeicherten Kurse und Filter."""
     if not _personal_features[0]:
         await update.message.reply_text("💡 Dieses Feature ist aktuell deaktiviert.")
@@ -255,10 +292,10 @@ async def cmd_setcourses(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
             return
 
-    await _show_setcourses_menu(update.message.reply_text, user_id)
+    await _show_setcourse_menu(update.message.reply_text, user_id)
 
 
-async def _show_setcourses_menu(reply_func, user_id: int, text_prefix=""):
+async def _show_setcourse_menu(reply_func, user_id: int, text_prefix=""):
     config = await db.get_user_course_config(user_id)
     
     lines = [f"{text_prefix}⚙️ *Kurs-Management*", ""]
@@ -440,12 +477,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 full_key = variants[0]
 
         await db.add_course_to_config(user_id, full_key)
-        await _show_setcourses_menu(query.edit_message_text, user_id, f"✅ Kurs `{full_key}` hinzugefügt.\n\n")
+        await _show_setcourse_menu(query.edit_message_text, user_id, f"✅ Kurs `{full_key}` hinzugefügt.\n\n")
 
     elif data.startswith("setc_addv:"):
         full_key = data.split(":")[1]
         await db.add_course_to_config(user_id, full_key)
-        await _show_setcourses_menu(query.edit_message_text, user_id, f"✅ Kurs `{full_key}` hinzugefügt.\n\n")
+        await _show_setcourse_menu(query.edit_message_text, user_id, f"✅ Kurs `{full_key}` hinzugefügt.\n\n")
 
     elif data == "setc_more":
         await _show_faculty_selection(query.edit_message_text)
@@ -455,7 +492,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     elif data == "setc_clear":
         await db.save_user_course_config(user_id, [])
-        await _show_setcourses_menu(query.edit_message_text, user_id, "🧼 Alle Kurse gelöscht.\n\n")
+        await _show_setcourse_menu(query.edit_message_text, user_id, "🧼 Alle Kurse gelöscht.\n\n")
 
     elif data == "setc_rem_select":
         config = await db.get_user_course_config(user_id)
@@ -469,7 +506,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif data.startswith("setc_rem_course:"):
         key = data.split(":")[1]
         await db.remove_course_from_config(user_id, key)
-        await _show_setcourses_menu(query.edit_message_text, user_id, f"✅ Kurs `{key}` entfernt.\n\n")
+        await _show_setcourse_menu(query.edit_message_text, user_id, f"✅ Kurs `{key}` entfernt.\n\n")
 
     elif data == "setc_filter_select":
         config = await db.get_user_course_config(user_id)
@@ -506,7 +543,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _show_course_filter_options(query, user_id, key)
 
     elif data == "setc_main":
-        await _show_setcourses_menu(query.edit_message_text, user_id)
+        await _show_setcourse_menu(query.edit_message_text, user_id)
 
     elif data.startswith("err_save:"):
         if not admin._is_admin(user_id):
@@ -561,7 +598,7 @@ async def cmd_myplan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     config = await db.get_user_course_config(user_id)
         
     if not config:
-        await update.message.reply_text("🎓 Du hast noch keine Kurse hinterlegt. Nutze /setcourses um dies zu tun.")
+        await update.message.reply_text("🎓 Du hast noch keine Kurse hinterlegt. Nutze /setcourse um dies zu tun.")
         return
 
     # Check Cache
@@ -923,7 +960,7 @@ async def main_async() -> None:
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("bug", cmd_bug))
     app.add_handler(CommandHandler("mensa", cmd_mensa))
-    app.add_handler(CommandHandler("setcourses", cmd_setcourses))
+    app.add_handler(CommandHandler(["setcourse", "setcourses"], cmd_setcourse))
     app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("myplan", cmd_myplan))

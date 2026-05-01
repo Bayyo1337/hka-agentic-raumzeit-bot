@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     # Max. Tokens pro User gesamt (0 = kein Limit)
     max_tokens_per_user: int = 0
 
+    revalidate_if_event_within_hours: int = 24
+
     log_level: str = "INFO"
 
     # Feature Flags

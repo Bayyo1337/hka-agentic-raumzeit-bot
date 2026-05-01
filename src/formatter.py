@@ -433,6 +433,36 @@ def _fmt_map(result: dict) -> str:
     return f"📍 *Lageplan für {_esc(query)}*\n\nDas Gebäude *{_esc(building)}* befindet sich auf dem Hauptcampus.\nEbene: *{_esc(floor)}*"
 
 
+def _fmt_next_occurrence(result: dict) -> str:
+    if "error" in result:
+        return f"❌ {result['error']}"
+    
+    module_name = result.get("module_name", "?")
+    if not result.get("found"):
+        return f"🤷‍♂️ {result.get('message', f'Keine kommenden Termine für {module_name} gefunden.')}"
+        
+    event = result.get("next_event", {})
+    date_str = _fmt_date(event.get("date", ""))
+    start = _to_hhmm(event.get("start", ""))
+    end = _to_hhmm(event.get("end", ""))
+    room = event.get("room", "")
+    course = event.get("name", "")
+    lecturer = event.get("lecturer", "")
+    
+    lines = [f"➡️ *Nächster Termin: {_esc(module_name)}*"]
+    lines.append(f"📅 {date_str}")
+    lines.append(f"⏰ {start} – {end}")
+    if room:
+        lines.append(f"🏫 Raum: {_esc(room)}")
+    if lecturer:
+        lines.append(f"👤 Dozent: {_esc(lecturer)}")
+    if course:
+        lines.append(f"🎓 Kurs: {_esc(course)}")
+        
+    lines.append("\n_(laut aktuellem Plan)_")
+    return "\n".join(lines)
+
+
 def _fmt_list(result) -> str:
     if isinstance(result, dict) and "error" in result:
         return f"❌ {result['error']}"
@@ -585,6 +615,7 @@ _FORMATTERS = {
     "get_courses_of_study":    _fmt_list,
     "get_all_rooms":           _fmt_list,
     "find_timetable_conflicts": _fmt_conflicts,
+    "get_next_occurrence":     _fmt_next_occurrence,
 }
 
 

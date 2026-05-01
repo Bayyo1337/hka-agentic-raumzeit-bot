@@ -68,6 +68,10 @@ INTENT_CONFIGS = {
         "tools": ["get_university_calendar"],
         "instruction": "Du bist Spezialist für Semesterzeiten und Feiertage. Keine Parameter nötig."
     },
+    "next_occurrence": {
+        "tools": ["get_next_occurrence"],
+        "instruction": "Du bist Spezialist für die Suche nach dem nächsten Termin eines Moduls. Extrahiere den Modulnamen (z.B. 'Mathe 1') und optional den Kurs-Key."
+    },
     "conflict_analysis": {
         "tools": ["find_timetable_conflicts"],
         "instruction": "Du bist Spezialist für Überschneidungen im Stundenplan. Extrahiere Kurs (z.B. 'Maschinenbau'), base_sem und target_sem. Der module_filter ist OPTIONAL. Wenn kein Modul genannt wurde, lasse ihn leer und vergleiche die gesamten Semester. Frage NIEMALS nach Modulen!"
@@ -77,7 +81,7 @@ INTENT_CONFIGS = {
             "get_room_timetable", "get_course_timetable", "get_lecturer_timetable", 
             "get_lecturer_info", "get_mensa_menu", "get_mensa_meal_details", "get_all_rooms", 
             "get_departments", "get_courses_of_study", "get_university_calendar", 
-            "find_timetable_conflicts", "get_campus_map"
+            "find_timetable_conflicts", "get_campus_map", "get_next_occurrence"
         ],
         "instruction": "Du bist ein allgemeiner Intent-Parser für das Raumzeit-Buchungssystem der HKA. Wähle das passende Tool aus."
     }
@@ -93,10 +97,12 @@ ALL_TOOLS_DEF = {
     "get_all_rooms": "get_all_rooms: keine Parameter",
     "get_departments": "get_departments: keine Parameter",
     "get_courses_of_study": "get_courses_of_study: faculty_id (optional)",
-    "get_university_calendar": "get_university_calendar: keine Parameter",
+    "university_calendar": "get_university_calendar: keine Parameter",
     "find_timetable_conflicts": "find_timetable_conflicts: course (z.B. \"Maschinenbau\"), base_sem (int, Semester in dem das Fach liegt), target_sem (int, Semester mit dem verglichen werden soll), module_filter (optional, z.B. \"etechnik\")",
+    "get_next_occurrence": "get_next_occurrence: module_name (z.B. \"Mathe 1\"), course_key (optional, z.B. \"MABB.2\") - NUTZE DIES BEI FRAGEN WIE 'Wann habe ich...?'",
     "get_campus_map": "get_campus_map: room_or_building (z.B. \"LI-145\" oder \"Gebäude M\") - NUTZE DIES NUR BEI FRAGEN NACH DEM ORT/STOCKWERK!"
 }
+
 
 def _extraction_prompt(primary_course: Optional[str] = None, intent: str = "smalltalk_fallback") -> str:
     config = INTENT_CONFIGS.get(intent, INTENT_CONFIGS["smalltalk_fallback"])
@@ -124,12 +130,13 @@ Regeln zur Zeitrechnung:
 - Max. 6 Calls gesamt""")
 
     # 3. Fehler-Handling & Priorisierung
-    if intent in ["course_timetable", "smalltalk_fallback"]:
+    if intent in ["course_timetable", "smalltalk_fallback", "next_occurrence"]:
         sections.append(f"""
 Fehler-Handling & Priorisierung:
-1. PERSÖNLICHE ANFRAGE: Wenn der Nutzer SEINEN persönlichen Plan abfragt ("mein Plan", "was habe ich heute", "wann habe ich..."), MUSST du die Kurse aus dem 'Nutzer-Profil' ({primary_course}) verwenden. Erzeuge für JEDEN Kurs einen `get_course_timetable` Call.
-2. EXPLIZITE ANFRAGE: Wenn der Nutzer einen konkreten Kurs-Key nennt (z.B. "MABB.2", "Maschinenbau Sem 3"), ignoriere das Profil und führe den Call nur für diesen Key aus.
-3. KEIN PROFIL: Wenn es eine persönliche Anfrage ist, aber das Profil 'Kein Kurs hinterlegt' zeigt, gib {{"error": "no_course"}} zurück.""")
+1. PERSÖNLICHE ANFRAGE: Wenn der Nutzer nach SEINEM Plan fragt ("mein Plan", "was habe ich heute"), MUSST du die Kurse aus dem 'Nutzer-Profil' ({primary_course}) verwenden. Erzeuge für JEDEN Kurs einen `get_course_timetable` Call.
+2. WANN HABE ICH X: Wenn der Nutzer fragt "Wann habe ich <Modul>?", nutze IMMER `get_next_occurrence`. Wenn ein Profil vorhanden ist ({primary_course}), nutze die Kurse daraus als `course_key`.
+3. EXPLIZITE ANFRAGE: Wenn der Nutzer einen konkreten Kurs-Key nennt (z.B. "MABB.2", "Maschinenbau Sem 3"), ignoriere das Profil und führe den Call nur für diesen Key aus.
+4. KEIN PROFIL: Wenn es eine persönliche Anfrage ist, aber das Profil 'Kein Kurs hinterlegt' zeigt, gib {{"error": "no_course"}} zurück.""")
 
     # 4. Format & Kontext
     sections.append("""
@@ -257,6 +264,8 @@ async def run(user_message: str, history: list[dict], user_id: int | None = None
     async def _execute(call: dict) -> tuple[str, dict]:
         name = call.get("tool", "")
         args = call.get("args", {})
+        if user_id:
+            args["user_id"] = user_id
         handler = TOOL_HANDLERS.get(name)
         if not handler: return name, {"error": f"Unbekanntes Tool: {name}"}
         try:

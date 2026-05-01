@@ -634,6 +634,11 @@ def _parse_ical(text: str, filter_date: str | None = None,
                 
                 current["name"] = name
                 current["lecturer"] = lecturer
+                
+                # Einfache Ausfallerkennung aus dem Text
+                name_lower = name.lower()
+                current["cancelled"] = any(kw in name_lower for kw in ["fällt aus", "entfällt", "canceled", "abgesagt", "storno"])
+                
                 events.append(current)
         elif line.startswith("SUMMARY:"):
             current["name"] = line[8:].strip()
@@ -730,6 +735,129 @@ async def get_course_timetable(course_semester: str, date: str | None = None) ->
         "course_semester": course_semester,
         "queried_date": label,
         "bookings": all_bookings,
+    }
+
+
+async def get_next_occurrence(module_query: str, course_key: str | list[str] | None = None, user_id: int | None = None) -> dict:
+    """
+    Sucht den nächsten Termin eines Moduls.
+    Berücksichtigt Caching und Revalidierung bei baldigen Terminen (< 24h).
+    """
+    if not module_query:
+        return {"error": "Kein Modulname angegeben."}
+        
+    target_norm = _norm(module_query)
+    now = _datetime.now()
+    
+    # a) Cache laden
+    cached_plan = None
+    if user_id:
+        cached_plan = await db.get_user_plan_cache(user_id)
+        
+    bookings = []
+    if cached_plan and "bookings" in cached_plan:
+        bookings = cached_plan["bookings"]
+        
+    def find_candidate(b_list):
+        candidates = []
+        for b in b_list:
+            # Fuzzy match auf Modulname oder Name
+            m_name = b.get("module") or b.get("name", "")
+            if target_norm in _norm(m_name):
+                # c) Abgesagte überspringen
+                if b.get("cancelled"):
+                    log.debug("Überspringe abgesagtes Event: %s am %s", m_name, b.get("date"))
+                    continue
+                
+                # Nur zukünftige Events
+                try:
+                    start_dt = _datetime.fromisoformat(b["start"])
+                    if start_dt > now:
+                        candidates.append((start_dt, b))
+                except Exception:
+                    continue
+        
+        if not candidates:
+            return None
+            
+        # d) Nächsten Termin wählen
+        candidates.sort(key=lambda x: x[0])
+        return candidates[0]
+
+    candidate = find_candidate(bookings)
+    
+    # e) Revalidierungs-Logik
+    should_refetch = False
+    reasons = []
+    if not cached_plan:
+        should_refetch = True
+        reasons.append("Kein Cache")
+    elif not candidate:
+        # Vielleicht ist es in einer Woche, die noch nicht im Cache ist?
+        should_refetch = True
+        reasons.append("Kein Termin im Cache")
+    else:
+        # Prüfen ob Termin bald ist
+        diff = candidate[0] - now
+        if diff.total_seconds() < settings.revalidate_if_event_within_hours * 3600:
+            should_refetch = True
+            reasons.append(f"Termin bald (< {settings.revalidate_if_event_within_hours}h)")
+
+    if should_refetch:
+        log.info("Revalidiere Cache für '%s' (Grund: %s)", module_query, ", ".join(reasons))
+        
+        # Kurs-Keys bestimmen
+        course_keys = []
+        if course_key:
+            if isinstance(course_key, str):
+                # Check for list-like string from LLM
+                if course_key.startswith("[") and course_key.endswith("]"):
+                    try:
+                        import ast
+                        course_keys = ast.literal_eval(course_key)
+                    except:
+                        course_keys = [course_key]
+                else:
+                    course_keys = [course_key]
+            elif isinstance(course_key, list):
+                course_keys = course_key
+        
+        if not course_keys and user_id:
+             config = await db.get_user_course_config(user_id)
+             course_keys = [c["key"] for c in config]
+            
+        if not course_keys:
+            return {"error": "Kein Studiengang gefunden. Bitte nutze /setcourse oder nenne einen Studiengang."}
+            
+        # Aktuelle + Nächste Woche abrufen
+        week_from, _ = _current_week_range()
+        _, week_to = _next_week_range()
+        
+        all_new_bookings = []
+        for key in course_keys:
+            # Wir rufen den Zeitraum ab
+            res = await get_course_timetable(key, date=f"{week_from}...{week_to}")
+            if "bookings" in res:
+                all_new_bookings.extend(res["bookings"])
+        
+        # Cache aktualisieren
+        if user_id:
+            await db.save_user_plan_cache(user_id, {"bookings": all_new_bookings})
+            
+        candidate = find_candidate(all_new_bookings)
+
+    if not candidate:
+        return {
+            "module_name": module_query,
+            "found": False,
+            "message": f"Keine kommenden Termine für '{module_query}' in den nächsten 2 Wochen gefunden. Bitte prüfe die Schreibweise oder frage nach einem anderen Zeitraum."
+        }
+        
+    return {
+        "module_name": module_query,
+        "found": True,
+        "next_event": candidate[1],
+        "verified_at": _datetime.now().isoformat()
     }
 
 
@@ -1521,6 +1649,7 @@ TOOL_HANDLERS = {
     "get_university_calendar": lambda inp: get_university_calendar(),
     "get_campus_map":          lambda inp: get_campus_map(inp.get("room_or_building", "")),
     "find_timetable_conflicts": lambda inp: _handle_conflicts(inp),
+    "get_next_occurrence":     lambda inp: get_next_occurrence(inp["module_name"], inp.get("course_key"), inp.get("user_id")),
 }
 
 async def _handle_conflicts(inp: dict):

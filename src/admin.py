@@ -41,7 +41,7 @@ async def _resolve_target(arg: str) -> int | None:
 
 @_require_admin
 async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    from src.state import _BOT_START, _maintenance
+    from src.state import _BOT_START, _maintenance, _personal_features, _map_features
     now = datetime.now()
     global_limit = settings.rate_limit_per_hour
 
@@ -59,20 +59,29 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     total_all = sum([await db.get_total_count(u["user_id"]) for u in users])
 
     provider = escape_markdown(agent.current_provider(), version=1)
+    
+    status_personal = "✅" if _personal_features[0] else "❌"
+    status_map = "✅" if _map_features[0] else "❌"
+    status_maint = "⚠️ AN" if maint_on else "✅ Aus"
+
     lines = [
-        "📋 Admin-Übersicht",
-        f"Uptime: {h}h {m}min  |  Provider: {provider}" + (" 🔧 Wartung" if maint_on else ""),
-        f"Anfragen gesamt: {total_all}  |  Tokens: {tok_in_all + tok_out_all:,}",
-        f"  ↳ Input: {tok_in_all:,}  |  Output: {tok_out_all:,}",
-        f"Kurs-Index: {index_count} Einträge  |  Dozenten: {len(raumzeit._LECTURERS)} gematcht",
+        "📋 *Admin-Dashboard*",
+        f"Uptime: `{h}h {m}min` | Provider: `{provider}`",
+        f"Anfragen: `{total_all}` | Tokens: `{tok_in_all + tok_out_all:,}`",
+        f"Kurs-Index: `{index_count}` | Dozenten: `{len(raumzeit._LECTURERS)}`",
+        "",
+        "⚙️ *Features & Status:*",
+        f"Wartung: {status_maint} | Personalisierung: {status_personal} | Karten: {status_map}",
         "",
     ]
 
     if not users:
-        lines.append("Noch keine Nutzerdaten vorhanden.")
+        lines.append("_Noch keine Nutzerdaten vorhanden._")
     else:
-        lines.append("Nutzer:")
-        for u in users:
+        # Nur die aktivsten/letzten 10 Nutzer zeigen, um Limit-Probleme zu vermeiden
+        lines.append(f"👤 *Nutzer (Gesamt: {len(users)}):*")
+        displayed_users = sorted(users, key=lambda x: x.get("user_id"), reverse=True)[:15]
+        for u in displayed_users:
             uid = u["user_id"]
             name = f"@{u['username']}" if u["username"] else u["first_name"] or str(uid)
             name = escape_markdown(name, version=1)
@@ -82,33 +91,28 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             tok = tok_in + tok_out
 
             effective_limit = u["custom_rate_limit"] if u["custom_rate_limit"] >= 0 else global_limit
-            reset_info = ""
-            if effective_limit and recent >= effective_limit:
-                oldest = await db.get_oldest_recent_ts(uid)
-                if oldest:
-                    mins = max(0, int((oldest + timedelta(hours=1) - now).total_seconds() / 60))
-                    reset_info = f" (reset ~{mins}min)"
-            elif effective_limit:
-                reset_info = f" ({effective_limit - recent} frei)"
-
+            
             ban_flag = " 🚫" if u["banned"] else ""
-            custom_flag = f" [limit={u['custom_rate_limit']}]" if u["custom_rate_limit"] >= 0 else ""
             lines.append(
-                f"👤 {name} ({uid}){ban_flag}{custom_flag}  "
-                f"{recent}/{effective_limit if effective_limit else '∞'}/h{reset_info}  |  "
-                f"{total} ges.  |  {tok:,} tok"
+                f"• {name} ({uid}){ban_flag} "
+                f"[`{recent}/{effective_limit if effective_limit else '∞'}`] | "
+                f"`{total}` ges. | `{tok:,}` tok"
             )
+        
+        if len(users) > 15:
+            lines.append(f"_... und {len(users) - 15} weitere Nutzer (nutze /user <ID> für Details)._")
 
     lines += [
         "",
-        "🛠 *Schnellzugriff:*",
+        "🛠 *Schnellaktionen:*",
         "• `/sync [all|courses|lecturers]` – Datenabgleich",
-        "• `/user [@username|ID]` – Nutzer-Details",
-        "• `/broadcast [Text]` – Rundnachricht senden",
-        "• `/loglevel [DEBUG|INFO|WARNING]` – Logtiefe",
-        "• `/maintenance [An|Aus]` – Wartungsmodus",
-        "• `/togglepersonal` – MyPlan Feature an/aus",
-        "• `/togglemap` – Karten Feature an/aus",
+        "• `/user [@username|ID]` – Nutzer-Details & Limits",
+        "• `/broadcast [Text]` – Rundnachricht an ALLE",
+        "• `/loglevel [DEBUG|INFO|WARNING]` – Log-Tiefe",
+        "• `/maintenance [on|off]` – Wartungsmodus",
+        "• `/togglepersonal` – Feature Personalisierung",
+        "• `/togglemap` – Feature Karten",
+        "• `/ping` – API-Status prüfen",
     ]
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")

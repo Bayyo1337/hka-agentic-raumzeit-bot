@@ -16,6 +16,7 @@ IntentType = Literal[
     "campus_map",
     "university_calendar",
     "conflict_analysis",
+    "next_occurrence",
     "smalltalk_fallback",
 ]
 
@@ -77,6 +78,7 @@ Verfügbare Intents:
 - campus_map: Fragen nach dem Weg, Lageplänen oder Gebäuden.
 - university_calendar: Fragen nach Semesterzeiten, Prüfungsphasen oder Ferien.
 - conflict_analysis: Fragen nach Überschneidungen im Stundenplan. WICHTIG: Wenn Studiengang (z.B. Maschinenbau) und zwei Semesterzahlen genannt werden, ist KEINE Klärung nötig. Nutze agent_flow!
+- next_occurrence: Fragen nach dem NÄCHSTEN Termin eines bestimmten Fachs/Moduls (z.B. "Wann habe ich Mathe?").
 - smalltalk_fallback: Für Smalltalk oder falls nichts anderes passt.
 
 Gib nur ein JSON-Objekt im angegebenen Schema zurück.
@@ -85,11 +87,13 @@ Nachricht: "{text}"
 {profile_info}
 
 Regel: 
-1. PERSÖNLICHER PLAN: "Was habe ich...", "Wann habe ich...", "Mein Plan" -> Dies bezieht sich IMMER auf den persönlichen Stundenplan. Falls ein Kurs im Profil steht, nutze ZWINGEND intent="course_timetable" und action="agent_flow".
-2. KLÄRUNG: Nutze action="ask_clarification" NUR DANN, wenn der Intent (z.B. Raum, Kurs, Dozent) klar ist, aber der konkrete Wert fehlt UND auch nicht im Nutzer-Profil steht.
-3. EXPLIZIT: Wenn der Nutzer einen Kurs-Key (MABB.2) nennt, ist das ein normaler agent_flow.
+1. PERSÖNLICHER PLAN: "Was habe ich heute/morgen...", "Mein Plan" -> Dies bezieht sich auf den gesamten Tagesplan.
+2. WANN HABE ICH X: "Wann habe ich Mathe?", "Wann ist Informatik?" -> Intent="next_occurrence". Falls ein Kurs im Profil steht, nutze agent_flow.
+3. KLÄRUNG: Nutze action="ask_clarification" NUR DANN, wenn der Intent (z.B. Raum, Kurs, Dozent) klar ist, aber der konkrete Wert fehlt UND auch nicht im Nutzer-Profil steht.
+4. EXPLIZIT: Wenn der Nutzer einen Kurs-Key (MABB.2) nennt, ist das ein normaler agent_flow.
 
 Beispiele:
+- "Wann habe ich Thermodynamik?" (Profil: [MABB.2]) -> {{"intent": "next_occurrence", "confidence": 1.0, "entities": {{"module_name": "Thermodynamik"}}, "strategy": {{"action": "agent_flow", "reason": "Next occurrence query with profile"}}}}
 - "Was habe ich heute?" (Profil: [MABB.2]) -> {{"intent": "course_timetable", "confidence": 1.0, "entities": {{}}, "strategy": {{"action": "agent_flow", "reason": "Personal query with profile"}}}}
 - "Stundenplan morgen" (Profil: leer) -> {{"intent": "course_timetable", "confidence": 0.9, "entities": {{}}, "strategy": {{"action": "ask_clarification", "reason": "Kurs fehlt"}}}}
 - "Wann ist M-102 frei?" -> {{"intent": "room_timetable", "confidence": 1.0, "entities": {{"room_name": "M-102"}}, "strategy": {{"action": "direct_tool", "reason": "Explicit room"}}}}
