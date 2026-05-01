@@ -51,7 +51,9 @@ async def init() -> None:
                 last_seen         TEXT NOT NULL DEFAULT '',
                 primary_course    TEXT,
                 pending_intent    TEXT,
-                missing_entities  TEXT
+                missing_entities  TEXT,
+                has_consented     INTEGER NOT NULL DEFAULT 0,
+                pending_message   TEXT NOT NULL DEFAULT ''
             );
             CREATE TABLE IF NOT EXISTS tokens (
                 user_id      INTEGER PRIMARY KEY,
@@ -110,6 +112,16 @@ async def init() -> None:
                 log.error("Migration failed: %s", e)
         try:
             await db.execute("ALTER TABLE users ADD COLUMN missing_entities TEXT")
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower():
+                log.error("Migration failed: %s", e)
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN has_consented INTEGER NOT NULL DEFAULT 0")
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower():
+                log.error("Migration failed: %s", e)
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN pending_message TEXT NOT NULL DEFAULT ''")
         except Exception as e:
             if "duplicate column name" not in str(e).lower():
                 log.error("Migration failed: %s", e)
@@ -660,6 +672,43 @@ async def run_gdpr_cleanup() -> dict:
 
 
 # ── Nutzerverwaltung (STATE_DB) ──────────────────────────────────────────────
+
+async def get_consent_status(user_id: int) -> int:
+    async with aiosqlite.connect(STATE_DB) as db:
+        async with db.execute(
+            "SELECT has_consented FROM users WHERE user_id=?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+    return row[0] if row else 0
+
+async def set_consent_status(user_id: int, status: int) -> None:
+    async with aiosqlite.connect(STATE_DB) as db:
+        await db.execute(
+            "UPDATE users SET has_consented=? WHERE user_id=?", (status, user_id)
+        )
+        await db.commit()
+
+async def save_pending_message(user_id: int, msg: str) -> None:
+    async with aiosqlite.connect(STATE_DB) as db:
+        await db.execute(
+            "UPDATE users SET pending_message=? WHERE user_id=?", (msg, user_id)
+        )
+        await db.commit()
+
+async def get_and_clear_pending_message(user_id: int) -> str:
+    async with aiosqlite.connect(STATE_DB) as db:
+        async with db.execute(
+            "SELECT pending_message FROM users WHERE user_id=?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        
+        msg = row[0] if row and row[0] else ""
+        if msg:
+            await db.execute(
+                "UPDATE users SET pending_message='' WHERE user_id=?", (user_id,)
+            )
+            await db.commit()
+        return msg
 
 async def upsert_user(user_id: int, username: str, first_name: str) -> None:
     async with aiosqlite.connect(STATE_DB) as db:

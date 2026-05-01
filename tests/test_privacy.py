@@ -322,3 +322,26 @@ async def test_error_reporting_behavior():
         assert report["user_input"] == "Hier ist ein Fehler"
     finally:
         settings.admin_user_ids = original_admins
+
+@pytest.mark.asyncio
+async def test_opt_in_gatekeeper_db():
+    user_id = 33333
+    await db.upsert_user(user_id, "testuser", "Test")
+    
+    # Default status should be 0
+    status = await db.get_consent_status(user_id)
+    assert status == 0
+    
+    # Update status to 1
+    await db.set_consent_status(user_id, 1)
+    status_updated = await db.get_consent_status(user_id)
+    assert status_updated == 1
+    
+    # Test pending message
+    await db.save_pending_message(user_id, "Hello World")
+    msg = await db.get_and_clear_pending_message(user_id)
+    assert msg == "Hello World"
+    
+    # Assert message is cleared
+    cleared_msg = await db.get_and_clear_pending_message(user_id)
+    assert cleared_msg == ""
