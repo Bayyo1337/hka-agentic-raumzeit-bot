@@ -26,6 +26,7 @@ from src import db
 from src import formatter
 from src import admin
 from src import terminal
+from src import privacy
 from src.formatter import CONFIRM_SENTINEL
 from src.state import _maintenance, _personal_features, _map_feature
 
@@ -89,10 +90,14 @@ _bug_reports: dict[int, dict] = {} # user_id -> {state, title, context, comment}
 
 _NEIN = {"nein", "ne", "n", "no", "falsch", "stimmt nicht", "stimmt nicht so", "nope"}
 _JA   = {"ja", "j", "yes", "y", "stimmt", "korrekt", "ok", "okay"}
-
 _USER_COMMANDS = [
     BotCommand("start", "Erste Schritte & Beispiele"),
     BotCommand("help", "Alle Befehle & Hilfe"),
+    BotCommand("privacy", "Datenschutz & DSGVO"),
+    BotCommand("consent", "Privacy-Einstellungen"),
+    BotCommand("data", "Deine Daten (DSGVO)"),
+    BotCommand("export", "Daten-Export (JSON)"),
+    BotCommand("delete", "Alle Daten löschen"),
     BotCommand("setcourse", "Studiengang & Filter einstellen"),
     BotCommand("myplan", "Dein persönlicher Stundenplan"),
     BotCommand("mensa", "Speiseplan der Mensa Moltke"),
@@ -937,6 +942,14 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
             except Exception as e:
                 log.warning("Konnte Admin %s nicht über Fehler benachrichtigen: %s", aid, e)
 
+async def gdpr_cleanup_job(context: ContextTypes.DEFAULT_TYPE):
+    """Führt nächtliche DSGVO-Bereinigung durch."""
+    try:
+        stats = await db.run_gdpr_cleanup()
+        log.info("DSGVO-Bereinigung abgeschlossen: %s", stats)
+    except Exception as e:
+        log.error("Fehler bei DSGVO-Bereinigung: %s", e)
+
 async def _post_init(app) -> None:
     await db.init()
     await app.bot.set_my_commands(_USER_COMMANDS)
@@ -953,9 +966,17 @@ async def _post_init(app) -> None:
     # Hintergrund-Tasks starten
     asyncio.create_task(_weekly_lecturer_refresh())
     asyncio.create_task(_background_sync_scheduler())
+    
+    # DSGVO-Cleanup Job (jeden Tag um 04:30)
+    if app.job_queue:
+        app.job_queue.run_daily(gdpr_cleanup_job, time=_time(4, 30))
 
 async def main_async() -> None:
     app = ApplicationBuilder().token(settings.telegram_bot_token).post_init(_post_init).build()
+    
+    # GDPR & Privacy
+    privacy.register_handlers(app)
+
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("bug", cmd_bug))

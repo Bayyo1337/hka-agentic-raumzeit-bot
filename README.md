@@ -86,11 +86,25 @@ Die Konfiguration erfolgt über die `.env` Datei.
 
 ---
 
+## 🛡 Datenschutz (DSGVO)
+Deine Privatsphäre ist uns wichtig. Der Bot implementiert:
+- **Datenminimierung**: Es wird nur gespeichert, was für die Funktion nötig ist.
+- **Kontrolle**: Mit `/data`, `/export` und `/delete` behältst du die volle Kontrolle über deine Daten.
+- **Transparenz**: Alle Speicherorte und Zwecke sind in der [Datenschutzerklärung](docs/DSGVO.md) dokumentiert.
+- **PII-Redaktion**: Automatische Filterung von E-Mails/Telefonnummern vor der KI-Verarbeitung.
+
+---
+
 ## 📱 Telegram Kommandos
 
 ### Nutzer-Befehle
 - `/start`: Begrüßung und erste Schritte.
 - `/help`: Detaillierte Hilfe und Beispielfragen.
+- `/privacy`: Datenschutz-Informationen und Link zur DSGVO-Erklärung.
+- `/consent`: Verwalte deine Privacy-Einstellungen (Was darf gespeichert werden?).
+- `/data`: Zeigt alle über dich gespeicherten Daten an.
+- `/export`: Exportiert deine Daten als JSON-Datei.
+- `/delete`: Löscht alle deine personenbezogenen Daten unwiderruflich.
 - `/setcourse`: Interaktiver Assistent zum Speichern deiner Kurse (Multi-Select).
 - `/myplan`: Zeigt deinen personalisierten Stundenplan für heute.
 - `/mensa`: Aktueller Speiseplan der Mensa Moltke.

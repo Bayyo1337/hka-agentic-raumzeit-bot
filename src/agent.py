@@ -223,12 +223,34 @@ def set_provider(provider: str) -> bool:
 def current_provider() -> str:
     return _provider_override or settings.llm_provider
 
+def redact_pii(text: str) -> str:
+    """Best-effort Redaktion von sensiblen Daten (Emails, Telefonnummern, IBANs)."""
+    if not text: return text
+    # IBAN (zuerst, da sie Zahlen enthält die als Telefonnummer missverstanden werden könnten)
+    text = re.sub(r'[A-Z]{2}\d{2}[ \d]{12,30}', '[IBAN]', text)
+    # Email
+    text = re.sub(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', '[EMAIL]', text)
+    # Telefon (mind. 7 Ziffern, um nicht versehentlich Jahreszahlen oder IDs zu treffen)
+    text = re.sub(r'\+?\d[\d\s-]{7,25}\d', '[PHONE]', text)
+    return text
+
 MAX_HISTORY_EXCHANGES = 3
 MAX_TOOL_CALLS = 6
 
 async def run(user_message: str, history: list[dict], user_id: int | None = None, user_label: str = "", primary_course: str | None = None, intent: str = "smalltalk_fallback") -> tuple[str, int, int, list]:
-    # Nutzer-Profil laden (immer aktuell aus DB, um History-Verwirrung zu vermeiden)
+    # 1. Privacy Settings laden
     from src import db
+    privacy = {"allow_history": 1, "allow_llm": 1}
+    if user_id:
+        privacy = await db.get_privacy_settings(user_id)
+
+    # Redaktion auf User-Input
+    safe_message = redact_pii(user_message)
+
+    if not privacy.get("allow_llm", True):
+        return "❌ <b>KI-Verarbeitung deaktiviert.</b>\n\nDu hast die KI-Verarbeitung in deinen /consent Einstellungen deaktiviert. Bitte aktiviere sie, um natürliche Anfragen zu stellen.", 0, 0, []
+
+    # Nutzer-Profil laden (immer aktuell aus DB, um History-Verwirrung zu vermeiden)
     if user_id:
         u = await db.get_user(user_id)
         if u:
@@ -239,10 +261,15 @@ async def run(user_message: str, history: list[dict], user_id: int | None = None
             else:
                 primary_course = u.get("primary_course")
 
-    filtered_history = filter_history_by_intent(history, intent)
+    # Historie filtern & redigieren (falls erlaubt)
+    if privacy.get("allow_history", True):
+        filtered_history = filter_history_by_intent(history, intent)
+    else:
+        filtered_history = []
+
     processed_history = []
     for msg in filtered_history:
-        content = msg.get("content", "")
+        content = redact_pii(msg.get("content", ""))
         if len(content) > 1000: content = content[:1000] + "... [gekürzt]"
         processed_history.append({"role": msg["role"], "content": content})
 
@@ -255,14 +282,17 @@ async def run(user_message: str, history: list[dict], user_id: int | None = None
         messages.extend(processed_history)
         # Kontext-Reminder direkt vor der User-Nachricht
         ctx = primary_course or "Kein Kurs hinterlegt"
-        user_content = f"[Nutzer-Profil: {ctx}] {user_message}"
+        user_content = f"[Nutzer-Profil: {ctx}] {safe_message}"
         messages.append({"role": "user", "content": user_content})
     else:
-        messages.append({"role": "user", "content": user_message})
+        messages.append({"role": "user", "content": safe_message})
 
-    log.debug("User %s (Intent: %s): %.80s", user_label, intent, user_message)
-    log.debug("LLM Provider: %s | Model: %s", settings.llm_provider, model)
-    log.debug("Vollständiger Prompt für LLM:\n%s", json.dumps(messages, indent=2, ensure_ascii=False))
+    # Hardened Logging
+    log.info("LLM Request for %s (Intent: %s)", user_label or f"User:{user_id}", intent)
+    if settings.debug and os.environ.get("ALLOW_PII_DEBUG_LOGS") == "1":
+        log.debug("FULL PROMPT (PII ENABLED):\n%s", json.dumps(messages, indent=2, ensure_ascii=False))
+    else:
+        log.debug("FULL PROMPT (PII REDACTED):\n%s", json.dumps(messages, indent=2, ensure_ascii=False).replace(user_message, "[USER_MSG_REDACTED]"))
     
     _set_api_key()
 
@@ -334,13 +364,14 @@ async def run(user_message: str, history: list[dict], user_id: int | None = None
         await asyncio.gather(*[_execute(c) for c in calls])
     )
 
-    reply = formatter.format_results(collected_results, user_message)
+    reply = formatter.format_results(collected_results, safe_message)
     
-    history.append({"role": "user", "content": user_message})
-    history.append({"role": "assistant", "content": reply})
-    max_entries = MAX_HISTORY_EXCHANGES * 2
-    if len(history) > max_entries:
-        del history[:-max_entries]
+    if privacy.get("allow_history", True):
+        history.append({"role": "user", "content": safe_message})
+        history.append({"role": "assistant", "content": reply})
+        max_entries = MAX_HISTORY_EXCHANGES * 2
+        if len(history) > max_entries:
+            del history[:-max_entries]
 
     log.info("Tokens: input=%d output=%d gesamt=%d",
              total_input_tokens, total_output_tokens, total_input_tokens + total_output_tokens)

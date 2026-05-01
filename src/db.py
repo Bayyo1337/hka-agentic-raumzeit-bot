@@ -59,11 +59,29 @@ async def init() -> None:
                 output_total INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS histories (
-                chat_id  INTEGER PRIMARY KEY,
-                messages TEXT NOT NULL DEFAULT '[]'
+                chat_id    INTEGER PRIMARY KEY,
+                messages   TEXT NOT NULL DEFAULT '[]',
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS user_privacy_settings (
+                user_id               INTEGER PRIMARY KEY,
+                allow_profile         INTEGER NOT NULL DEFAULT 1,
+                allow_history         INTEGER NOT NULL DEFAULT 1,
+                allow_llm             INTEGER NOT NULL DEFAULT 1,
+                allow_telemetry       INTEGER NOT NULL DEFAULT 1,
+                history_ttl_hours     INTEGER NOT NULL DEFAULT 168,
+                telemetry_ttl_hours   INTEGER NOT NULL DEFAULT 24,
+                plan_cache_ttl_hours  INTEGER NOT NULL DEFAULT 4,
+                feedback_ttl_days     INTEGER NOT NULL DEFAULT 30,
+                updated_at            TEXT NOT NULL DEFAULT ''
             );
         """)
         # Migration: Falls Spalten in state.db noch fehlen
+        try:
+            await db.execute("ALTER TABLE histories ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower():
+                log.error("Migration failed (histories.updated_at): %s", e)
         try:
             await db.execute("ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0")
         except Exception as e:
@@ -306,11 +324,14 @@ async def load_history(chat_id: int) -> list[dict]:
 
 
 async def save_history(chat_id: int, messages: list[dict]) -> None:
+    now = datetime.now().isoformat()
     async with aiosqlite.connect(STATE_DB) as db:
         await db.execute("""
-            INSERT INTO histories (chat_id, messages) VALUES (?, ?)
-            ON CONFLICT(chat_id) DO UPDATE SET messages = excluded.messages
-        """, (chat_id, json.dumps(messages, ensure_ascii=False)))
+            INSERT INTO histories (chat_id, messages, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET 
+                messages = excluded.messages,
+                updated_at = excluded.updated_at
+        """, (chat_id, json.dumps(messages, ensure_ascii=False), now))
         await db.commit()
 
 
@@ -326,6 +347,178 @@ async def clear_history(chat_id: int) -> None:
     async with aiosqlite.connect(STATE_DB) as db:
         await db.execute("DELETE FROM histories WHERE chat_id=?", (chat_id,))
         await db.commit()
+
+
+# ── Privacy Settings (STATE_DB) ─────────────────────────────────────────────
+
+async def get_privacy_settings(user_id: int) -> dict:
+    async with aiosqlite.connect(STATE_DB) as db:
+        async with db.execute(
+            "SELECT allow_profile, allow_history, allow_llm, allow_telemetry, "
+            "history_ttl_hours, telemetry_ttl_hours, plan_cache_ttl_hours, "
+            "feedback_ttl_days FROM user_privacy_settings WHERE user_id=?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+    
+    if not row:
+        return {
+            "allow_profile": 1, "allow_history": 1, "allow_llm": 1, "allow_telemetry": 1,
+            "history_ttl_hours": 168, "telemetry_ttl_hours": 24, "plan_cache_ttl_hours": 4,
+            "feedback_ttl_days": 30
+        }
+    
+    return {
+        "allow_profile": bool(row[0]), "allow_history": bool(row[1]),
+        "allow_llm": bool(row[2]), "allow_telemetry": bool(row[3]),
+        "history_ttl_hours": row[4], "telemetry_ttl_hours": row[5],
+        "plan_cache_ttl_hours": row[6], "feedback_ttl_days": row[7]
+    }
+
+
+async def set_privacy_settings(user_id: int, settings: dict) -> None:
+    now = datetime.now().isoformat()
+    async with aiosqlite.connect(STATE_DB) as db:
+        await db.execute("""
+            INSERT INTO user_privacy_settings (
+                user_id, allow_profile, allow_history, allow_llm, allow_telemetry,
+                history_ttl_hours, telemetry_ttl_hours, plan_cache_ttl_hours,
+                feedback_ttl_days, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                allow_profile = excluded.allow_profile,
+                allow_history = excluded.allow_history,
+                allow_llm = excluded.allow_llm,
+                allow_telemetry = excluded.allow_telemetry,
+                history_ttl_hours = excluded.history_ttl_hours,
+                telemetry_ttl_hours = excluded.telemetry_ttl_hours,
+                plan_cache_ttl_hours = excluded.plan_cache_ttl_hours,
+                feedback_ttl_days = excluded.feedback_ttl_days,
+                updated_at = excluded.updated_at
+        """, (
+            user_id, int(settings.get("allow_profile", 1)),
+            int(settings.get("allow_history", 1)), int(settings.get("allow_llm", 1)),
+            int(settings.get("allow_telemetry", 1)), settings.get("history_ttl_hours", 168),
+            settings.get("telemetry_ttl_hours", 24), settings.get("plan_cache_ttl_hours", 4),
+            settings.get("feedback_ttl_days", 30), now
+        ))
+        await db.commit()
+
+
+# ── GDPR Export & Delete ───────────────────────────────────────────────────
+
+async def export_user_data(user_id: int) -> dict:
+    data = {"exported_at": datetime.now().isoformat(), "user_id": user_id}
+    
+    # 1. State DB
+    async with aiosqlite.connect(STATE_DB) as db:
+        async with db.execute("SELECT * FROM users WHERE user_id=?", (user_id,)) as cur:
+            data["profile"] = await cur.fetchone()
+        async with db.execute("SELECT * FROM tokens WHERE user_id=?", (user_id,)) as cur:
+            data["tokens"] = await cur.fetchone()
+        async with db.execute("SELECT * FROM histories WHERE chat_id=?", (user_id,)) as cur:
+            row = await cur.fetchone()
+            data["history"] = json.loads(row[1]) if row else []
+        async with db.execute("SELECT * FROM user_privacy_settings WHERE user_id=?", (user_id,)) as cur:
+            data["privacy_settings"] = await cur.fetchone()
+
+    # 2. Cache DB
+    async with aiosqlite.connect(CACHE_DB) as db:
+        async with db.execute("SELECT cached_at, plan_json FROM user_plan_cache WHERE user_id=?", (user_id,)) as cur:
+            row = await cur.fetchone()
+            if row:
+                data["plan_cache"] = {"cached_at": row[0], "plan": json.loads(row[1])}
+
+    # 3. Telemetry DB
+    async with aiosqlite.connect(TELEMETRY_DB) as db:
+        async with db.execute("SELECT ts FROM requests WHERE user_id=? ORDER BY ts DESC", (user_id,)) as cur:
+            rows = await cur.fetchall()
+            data["telemetry"] = {"request_timestamps": [r[0] for r in rows]}
+
+    # 4. Feedback Files
+    feedback_dir = "data/feedback"
+    data["feedback_files"] = []
+    if os.path.isdir(feedback_dir):
+        for f in os.listdir(feedback_dir):
+            if f.endswith(f"_{user_id}.json"):
+                with open(os.path.join(feedback_dir, f), "r", encoding="utf-8") as j:
+                    data["feedback_files"].append({"filename": f, "content": json.load(j)})
+    
+    return data
+
+
+async def delete_user_data(user_id: int) -> bool:
+    """Hard delete aller personenbezogenen Daten eines Nutzers."""
+    # 1. State DB
+    async with aiosqlite.connect(STATE_DB) as db:
+        await db.execute("DELETE FROM users WHERE user_id=?", (user_id,))
+        await db.execute("DELETE FROM tokens WHERE user_id=?", (user_id,))
+        await db.execute("DELETE FROM histories WHERE chat_id=?", (user_id,))
+        await db.execute("DELETE FROM user_privacy_settings WHERE user_id=?", (user_id,))
+        await db.commit()
+    
+    # 2. Cache DB
+    async with aiosqlite.connect(CACHE_DB) as db:
+        await db.execute("DELETE FROM user_plan_cache WHERE user_id=?", (user_id,))
+        await db.commit()
+    
+    # 3. Telemetry DB
+    async with aiosqlite.connect(TELEMETRY_DB) as db:
+        await db.execute("DELETE FROM requests WHERE user_id=?", (user_id,))
+        await db.commit()
+    
+    # 4. Feedback Files
+    feedback_dir = "data/feedback"
+    if os.path.isdir(feedback_dir):
+        for f in os.listdir(feedback_dir):
+            if f.endswith(f"_{user_id}.json"):
+                os.remove(os.path.join(feedback_dir, f))
+    
+    return True
+
+
+async def run_gdpr_cleanup() -> dict:
+    """Bereinigt abgelaufene Daten basierend auf TTLs in user_privacy_settings."""
+    stats = {"histories": 0, "telemetry": 0, "plan_cache": 0, "feedback": 0}
+    now = datetime.now()
+
+    # Wir holen alle User mit individuellen TTLs
+    async with aiosqlite.connect(STATE_DB) as db:
+        async with db.execute("SELECT user_id, history_ttl_hours FROM user_privacy_settings") as cur:
+            rows = await cur.fetchall()
+            for uid, ttl in rows:
+                cutoff = (now - timedelta(hours=ttl)).isoformat()
+                res = await db.execute("DELETE FROM histories WHERE chat_id=? AND updated_at < ?", (uid, cutoff))
+                stats["histories"] += res.rowcount
+        await db.commit()
+
+    # Telemetrie global (24h Default für alle, die nichts anderes sagen)
+    async with aiosqlite.connect(TELEMETRY_DB) as db:
+        # Hier ist es schwerer pro User zu löschen ohne Join über DBs. 
+        # Wir nehmen einen sicheren Default von 7 Tagen für alle, falls nicht anders konfiguriert.
+        cutoff = (now - timedelta(days=7)).isoformat()
+        res = await db.execute("DELETE FROM requests WHERE ts < ?", (cutoff,))
+        stats["telemetry"] += res.rowcount
+        await db.commit()
+
+    # Plan Cache global (24h)
+    async with aiosqlite.connect(CACHE_DB) as db:
+        cutoff = (now - timedelta(hours=24)).isoformat()
+        res = await db.execute("DELETE FROM user_plan_cache WHERE cached_at < ?", (cutoff,))
+        stats["plan_cache"] += res.rowcount
+        await db.commit()
+
+    # Feedback Files (30 Tage Default)
+    feedback_dir = "data/feedback"
+    if os.path.isdir(feedback_dir):
+        for f in os.listdir(feedback_dir):
+            if f.endswith(".json"):
+                fpath = os.path.join(feedback_dir, f)
+                mtime = datetime.fromtimestamp(os.path.getmtime(fpath))
+                if (now - mtime).days > 30:
+                    os.remove(fpath)
+                    stats["feedback"] += 1
+    
+    return stats
 
 
 # ── Nutzerverwaltung (STATE_DB) ──────────────────────────────────────────────
