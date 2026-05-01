@@ -10,6 +10,7 @@ import os
 import json
 import traceback
 import uuid
+import httpx
 from datetime import datetime, timedelta, time as _time
 from logging.handlers import RotatingFileHandler
 
@@ -411,6 +412,37 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
 
     elif data.startswith("setc_add:"):
+        full_key = data.split(":")[1]
+        
+        # Prüfung auf Varianten (Gruppen)
+        parts = full_key.split(".")
+        if len(parts) == 2:
+            abbr, sem = parts
+            variants = await db.get_course_variants(abbr, int(sem))
+            if len(variants) > 1:
+                # Mehrere Varianten -> Auswahl zeigen
+                keyboard = []
+                for v in variants:
+                    # v ist der volle Key, z.B. MABB.3.E
+                    label = v.split(".")[-1] if "." in v else v
+                    keyboard.append([InlineKeyboardButton(f"Gruppe {label}", callback_data=f"setc_addv:{v}")])
+                keyboard.append([InlineKeyboardButton("Nur Basis-Kurs (nicht empfohlen)", callback_data=f"setc_addv:{full_key}")])
+                keyboard.append([InlineKeyboardButton("⬅️ Zurück", callback_data=f"setc_more")])
+                
+                await query.edit_message_text(
+                    f"Für *{full_key}* wurden verschiedene Gruppen gefunden.\nWelcher Gruppe gehörst du an?",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode="Markdown"
+                )
+                return
+            elif len(variants) == 1:
+                # Nur eine Variante -> Direkt diese nehmen
+                full_key = variants[0]
+
+        await db.add_course_to_config(user_id, full_key)
+        await _show_setcourses_menu(query.edit_message_text, user_id, f"✅ Kurs `{full_key}` hinzugefügt.\n\n")
+
+    elif data.startswith("setc_addv:"):
         full_key = data.split(":")[1]
         await db.add_course_to_config(user_id, full_key)
         await _show_setcourses_menu(query.edit_message_text, user_id, f"✅ Kurs `{full_key}` hinzugefügt.\n\n")
@@ -815,9 +847,11 @@ async def _background_sync_scheduler():
 async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Loggt Fehler und beendet den Prozess bei zu vielen Netzwerkfehlern."""
     global _consecutive_network_errors
-    if isinstance(context.error, NetworkError):
+    
+    # Netzwerk-Fehler (Telegram oder Httpx Polling)
+    if isinstance(context.error, NetworkError) or isinstance(context.error, httpx.ReadError):
         _consecutive_network_errors += 1
-        log.warning("Telegram Netzwerkfehler (%d/%d): %s", 
+        log.warning("Verbindungsfehler (%d/%d): %s", 
                     _consecutive_network_errors, NETWORK_ERROR_THRESHOLD, context.error)
         if _consecutive_network_errors >= NETWORK_ERROR_THRESHOLD:
             log.critical("Zu viele Netzwerkfehler. Beende Bot für Systemd-Restart...")
@@ -946,7 +980,11 @@ async def main_async() -> None:
         log.info("Bot läuft im Daemon-Modus (Hintergrund).")
         # Im Daemon-Modus einfach unendlich warten
         while True:
-            await asyncio.sleep(3600)
+            try:
+                await asyncio.sleep(3600)
+            except httpx.ReadError:
+                # Wird meistens im Polling gefangen, aber falls hier etwas schief geht
+                log.warning("Httpx ReadError im Warte-Loop abgefangen.")
     
     # Shutdown-Sequenz mit Logging
     log.debug("Shutdown-Sequenz gestartet...")
