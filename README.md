@@ -76,8 +76,8 @@ Wir nutzen [uv](https://github.com/astral-sh/uv) für blitzschnelles Dependency-
 git clone https://github.com/Bayyo1337/hka-agentic-raumzeit-bot.git
 cd hka-agentic-raumzeit-bot
 uv sync
-uv run python scripts/onboard.py
-uv run python scripts/generate_maps.py
+uv run python scripts/setup/onboard.py
+uv run python scripts/setup/generate_maps.py
 ```
 
 ### 3. Testing & Start
