@@ -19,6 +19,7 @@ async def test_privacy_settings_defaults():
     assert settings["allow_history"] == 1
     assert settings["allow_llm"] == 1
     assert settings["history_ttl_hours"] == 168
+    assert settings["allow_error_reports"] == 0
 
 @pytest.mark.asyncio
 async def test_privacy_settings_update():
@@ -28,6 +29,7 @@ async def test_privacy_settings_update():
         "allow_history": 0,
         "allow_llm": 1,
         "allow_telemetry": 1,
+        "allow_error_reports": 1,
         "history_ttl_hours": 24,
         "telemetry_ttl_hours": 2,
         "plan_cache_ttl_hours": 1,
@@ -39,6 +41,7 @@ async def test_privacy_settings_update():
     assert saved["allow_profile"] == 0
     assert saved["allow_history"] == 0
     assert saved["history_ttl_hours"] == 24
+    assert saved["allow_error_reports"] == 1
 
 @pytest.mark.asyncio
 async def test_user_data_export_and_delete():

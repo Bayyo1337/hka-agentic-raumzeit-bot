@@ -69,6 +69,7 @@ async def init() -> None:
                 allow_history         INTEGER NOT NULL DEFAULT 1,
                 allow_llm             INTEGER NOT NULL DEFAULT 1,
                 allow_telemetry       INTEGER NOT NULL DEFAULT 1,
+                allow_error_reports   INTEGER NOT NULL DEFAULT 0,
                 history_ttl_hours     INTEGER NOT NULL DEFAULT 168,
                 telemetry_ttl_hours   INTEGER NOT NULL DEFAULT 24,
                 plan_cache_ttl_hours  INTEGER NOT NULL DEFAULT 4,
@@ -77,6 +78,11 @@ async def init() -> None:
             );
         """)
         # Migration: Falls Spalten in state.db noch fehlen
+        try:
+            await db.execute("ALTER TABLE user_privacy_settings ADD COLUMN allow_error_reports INTEGER NOT NULL DEFAULT 0")
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower():
+                log.error("Migration failed (user_privacy_settings.allow_error_reports): %s", e)
         try:
             await db.execute("ALTER TABLE histories ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
         except Exception as e:
@@ -356,13 +362,14 @@ async def get_privacy_settings(user_id: int) -> dict:
         async with db.execute(
             "SELECT allow_profile, allow_history, allow_llm, allow_telemetry, "
             "history_ttl_hours, telemetry_ttl_hours, plan_cache_ttl_hours, "
-            "feedback_ttl_days FROM user_privacy_settings WHERE user_id=?", (user_id,)
+            "feedback_ttl_days, allow_error_reports FROM user_privacy_settings WHERE user_id=?", (user_id,)
         ) as cur:
             row = await cur.fetchone()
     
     if not row:
         return {
             "allow_profile": 1, "allow_history": 1, "allow_llm": 1, "allow_telemetry": 1,
+            "allow_error_reports": 0,
             "history_ttl_hours": 168, "telemetry_ttl_hours": 24, "plan_cache_ttl_hours": 4,
             "feedback_ttl_days": 30
         }
@@ -371,7 +378,8 @@ async def get_privacy_settings(user_id: int) -> dict:
         "allow_profile": bool(row[0]), "allow_history": bool(row[1]),
         "allow_llm": bool(row[2]), "allow_telemetry": bool(row[3]),
         "history_ttl_hours": row[4], "telemetry_ttl_hours": row[5],
-        "plan_cache_ttl_hours": row[6], "feedback_ttl_days": row[7]
+        "plan_cache_ttl_hours": row[6], "feedback_ttl_days": row[7],
+        "allow_error_reports": bool(row[8])
     }
 
 
@@ -382,8 +390,8 @@ async def set_privacy_settings(user_id: int, settings: dict) -> None:
             INSERT INTO user_privacy_settings (
                 user_id, allow_profile, allow_history, allow_llm, allow_telemetry,
                 history_ttl_hours, telemetry_ttl_hours, plan_cache_ttl_hours,
-                feedback_ttl_days, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                feedback_ttl_days, updated_at, allow_error_reports
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 allow_profile = excluded.allow_profile,
                 allow_history = excluded.allow_history,
@@ -393,13 +401,15 @@ async def set_privacy_settings(user_id: int, settings: dict) -> None:
                 telemetry_ttl_hours = excluded.telemetry_ttl_hours,
                 plan_cache_ttl_hours = excluded.plan_cache_ttl_hours,
                 feedback_ttl_days = excluded.feedback_ttl_days,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                allow_error_reports = excluded.allow_error_reports
         """, (
             user_id, int(settings.get("allow_profile", 1)),
             int(settings.get("allow_history", 1)), int(settings.get("allow_llm", 1)),
             int(settings.get("allow_telemetry", 1)), settings.get("history_ttl_hours", 168),
             settings.get("telemetry_ttl_hours", 24), settings.get("plan_cache_ttl_hours", 4),
-            settings.get("feedback_ttl_days", 30), now
+            settings.get("feedback_ttl_days", 30), now,
+            int(settings.get("allow_error_reports", 0))
         ))
         await db.commit()
 
