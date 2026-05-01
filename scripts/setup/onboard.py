@@ -1,8 +1,6 @@
-import os
-import json
 from pathlib import Path
 from rich.console import Console
-from rich.prompt import Prompt, Confirm
+from rich.prompt import Prompt
 from rich.panel import Panel
 
 console = Console()

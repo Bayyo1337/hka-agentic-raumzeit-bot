@@ -1,8 +1,7 @@
 
 import pytest
 import json
-import asyncio
-from src import db, formatter
+from src import formatter
 
 @pytest.mark.asyncio
 async def test_db_config_migration():

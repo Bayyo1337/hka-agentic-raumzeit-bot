@@ -1,5 +1,5 @@
 import pytest
-from src.router import router_instance, RouterOutput
+from src.router import router_instance
 
 @pytest.mark.asyncio
 async def test_fast_path_room():

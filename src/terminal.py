@@ -4,16 +4,13 @@ Interaktive Terminal-Konsole und Rich-Dashboard für den Raumzeit-Bot.
 
 import asyncio
 import logging
-import sys
 import json
 import litellm
 from datetime import datetime
 from rich.console import Console
 from rich.panel import Panel
-from rich.live import Live
 from rich.table import Table
 
-from src.config import settings
 from src import agent
 from src import tools as raumzeit
 from src import db
@@ -46,7 +43,7 @@ def make_dashboard() -> Panel:
 
 async def terminal_loop(app, stop_event: asyncio.Event):
     """Schleife für Konsolenbefehle."""
-    from src.bot import set_log_level, _run_index_build, _run_lecturer_build
+    from src.bot import set_log_level
     while not stop_event.is_set():
         try:
             # Nutze to_thread für blockierende Eingabe
@@ -78,7 +75,7 @@ async def terminal_loop(app, stop_event: asyncio.Event):
                     try:
                         c_count = await raumzeit.build_course_index()
                         l_count = await raumzeit.build_lecturer_index()
-                        console.print(f"\n[bold green]✅ Sync abgeschlossen![/bold green]")
+                        console.print("\n[bold green]✅ Sync abgeschlossen![/bold green]")
                         console.print(f"  - Kurs-Index: {c_count} Einträge")
                         console.print(f"  - Dozenten-Index: {l_count} Matches\n")
                     except Exception as e:

@@ -12,7 +12,6 @@ os.environ["DB_DIR"] = _TEMP_DB_DIR.name
 from src import db
 from src.router import router_instance
 from src import agent
-from src import tools
 
 fixtures_path = Path(__file__).parent / "fixtures" / "dynamic_e2e_cases.json"
 if not fixtures_path.exists():

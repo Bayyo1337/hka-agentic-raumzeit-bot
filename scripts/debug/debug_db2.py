@@ -1,6 +1,5 @@
 import asyncio
 import aiosqlite
-import os
 
 async def main():
     async with aiosqlite.connect("data/state.db") as db:

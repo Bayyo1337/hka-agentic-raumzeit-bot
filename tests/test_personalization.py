@@ -34,7 +34,7 @@ def test_formatter_no_confirm_on_personal_empty():
 
 def test_next_week_date_logic():
     from src.tools import _next_week_range
-    from datetime import date, timedelta
+    from datetime import date
     
     # We can't easily mock date.today() without freezegun, 
     # but we can verify the properties of the result.
