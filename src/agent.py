@@ -226,12 +226,17 @@ def current_provider() -> str:
 def redact_pii(text: str) -> str:
     """Best-effort Redaktion von sensiblen Daten (Emails, Telefonnummern, IBANs)."""
     if not text: return text
-    # IBAN (zuerst, da sie Zahlen enthält die als Telefonnummer missverstanden werden könnten)
-    text = re.sub(r'[A-Z]{2}\d{2}[ \d]{12,30}', '[IBAN]', text)
-    # Email
-    text = re.sub(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', '[EMAIL]', text)
-    # Telefon (mind. 7 Ziffern, um nicht versehentlich Jahreszahlen oder IDs zu treffen)
-    text = re.sub(r'\+?\d[\d\s-]{7,25}\d', '[PHONE]', text)
+    # 1. IBAN (zuerst, da sie Zahlen enthält die als Telefonnummer missverstanden werden könnten)
+    # Deckt gängige EU-IBANs ab (Ländercode + Prüfziffer + bis zu 30 Stellen)
+    text = re.sub(r'\b[A-Z]{2}\d{2}[ \d]{12,30}\b', '[IBAN]', text)
+    
+    # 2. Email
+    text = re.sub(r'\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+\b', '[EMAIL]', text)
+    
+    # 3. Telefon (mind. 7 Ziffern, um nicht versehentlich Jahreszahlen oder IDs zu treffen)
+    # Erkennt Formate wie +49 123..., 0123-456..., 0721 1234567
+    text = re.sub(r'(\+?\d[\d\s-]{5,}\d)', lambda m: '[PHONE]' if sum(c.isdigit() for c in m.group(0)) >= 7 else m.group(0), text)
+    
     return text
 
 MAX_HISTORY_EXCHANGES = 3

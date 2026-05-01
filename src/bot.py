@@ -561,8 +561,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.edit_message_text("⚠️ Fehlerdaten nicht mehr im Cache (Bot-Neustart?).")
             return
             
-        filename = admin.save_issue_from_log(err_data)
-        await query.edit_message_text(f"✅ Issue erstellt: `issues/active/{filename}`", parse_mode="Markdown")
+        filename = await admin.save_issue_from_log(err_data)
+        await query.edit_message_text(f"✅ Feedback gespeichert: `{filename}`", parse_mode="Markdown")
         # Aus Cache entfernen um Speicher zu sparen
         _error_cache.pop(err_id, None)
 
@@ -691,10 +691,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
         elif state == "WAITING_FOR_COMMENT":
             user_info = f"@{user.username}" if user.username else str(user_id)
-            filename = admin.save_user_issue(report["title"], report.get("context", "N/A"), text, user_info)
+            filename = await admin.save_user_issue(report["title"], report.get("context", "N/A"), text, user_info)
             _bug_reports.pop(user_id)
             await update.message.reply_text(
-                f"✅ *Vielen Dank!*\n\nDein Feedback wurde als Issue gespeichert:\n`issues/active/{filename}`",
+                f"✅ *Vielen Dank!*\n\nDein Feedback wurde gespeichert:\n`{filename}`",
                 parse_mode="Markdown"
             )
             return
@@ -910,28 +910,50 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
         err_id = str(uuid.uuid4())[:8]
         user_input = "N/A"
         user_info = "System"
+        uid = 0
+        anonymized = False
         
-        if update and update.effective_user:
-            user_info = f"@{update.effective_user.username}" if update.effective_user.username else str(update.effective_user.id)
-            if update.effective_message and update.effective_message.text:
-                user_input = update.effective_message.text
-                
+        # Sicherer Zugriff auf update-Attribute
+        if update:
+            effective_user = getattr(update, "effective_user", None)
+            if effective_user:
+                uid = effective_user.id
+                user_info = f"@{effective_user.username}" if effective_user.username else str(uid)
+            
+            effective_message = getattr(update, "effective_message", None)
+            if effective_message and effective_message.text:
+                user_input = effective_message.text
+
+        # Privacy Check & Redaktion
+        report_uid = uid
+        if uid > 0:
+            privacy_settings = await db.get_privacy_settings(uid)
+            user_input = agent.redact_pii(user_input)
+            if not privacy_settings.get("allow_error_reports", False):
+                report_uid = 0
+                user_input = "[REDACTED]"
+                user_info = "Anonymous"
+                anonymized = True
+
         _error_cache[err_id] = {
             "error": error_msg,
             "traceback": tb,
             "user_input": user_input,
             "user_info": user_info,
+            "user_id": report_uid, # Für Kompatibilität mit save_issue_from_log
+            "report_uid": report_uid,
             "timestamp": datetime.now().isoformat()
         }
         
         # Benachrichtigung an Admins
+        status_tag = " (Anonymisiert)" if anonymized else ""
         for aid in settings.admin_ids:
             try:
                 keyboard = [[InlineKeyboardButton("📝 Issue erstellen", callback_data=f"err_save:{err_id}")]]
                 await context.bot.send_message(
                     chat_id=aid,
                     text=(
-                        f"🚨 *Bot-Fehler*\n"
+                        f"🚨 *Bot-Fehler*{status_tag}\n"
                         f"User: {escape_markdown(user_info)}\n"
                         f"Input: `{escape_markdown(user_input)}`\n\n"
                         f"Error: `{escape_markdown(error_msg)}`"
