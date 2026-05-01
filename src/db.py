@@ -341,12 +341,36 @@ async def save_history(chat_id: int, messages: list[dict]) -> None:
         await db.commit()
 
 
-async def save_feedback_log(chat_id: int, data: dict) -> str:
+async def save_feedback_json(data: dict) -> str:
+    """Speichert strukturiertes Feedback als JSON."""
     os.makedirs("data/feedback", exist_ok=True)
-    path = f"data/feedback/{date.today().isoformat()}_{chat_id}.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    return path
+    user_id = data.get("user_id", 0)
+    fb_type = data.get("type", "feedback")
+    now = datetime.now()
+
+    # German format for internal JSON
+    data["timestamp"] = now.strftime("%d.%m.%Y %H:%M:%S")
+
+    ts_file = now.strftime("%Y-%m-%d_%H%M%S")
+    filename = f"{ts_file}_{user_id}_{fb_type}.json"
+    path = os.path.join("data/feedback", filename)
+
+    try:
+        content = json.dumps(data, ensure_ascii=False, indent=2)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+    except Exception as e:
+        log.error("Failed to save feedback JSON for user %s: %s", user_id, e)
+        # Fallback: Save as plain text if JSON fails
+        try:
+            with open(path + ".txt", "w", encoding="utf-8") as f:
+                f.write(str(data))
+            return filename + ".txt"
+        except Exception:
+            pass
+        return ""
+
+    return filename
 
 
 async def clear_history(chat_id: int) -> None:
@@ -368,8 +392,8 @@ async def get_privacy_settings(user_id: int) -> dict:
     
     if not row:
         return {
-            "allow_profile": 1, "allow_history": 1, "allow_llm": 1, "allow_telemetry": 1,
-            "allow_error_reports": 0,
+            "allow_profile": True, "allow_history": True, "allow_llm": True, "allow_telemetry": True,
+            "allow_error_reports": False,
             "history_ttl_hours": 168, "telemetry_ttl_hours": 24, "plan_cache_ttl_hours": 4,
             "feedback_ttl_days": 30
         }
@@ -428,8 +452,22 @@ async def export_user_data(user_id: int) -> dict:
         async with db.execute("SELECT * FROM histories WHERE chat_id=?", (user_id,)) as cur:
             row = await cur.fetchone()
             data["history"] = json.loads(row[1]) if row else []
-        async with db.execute("SELECT * FROM user_privacy_settings WHERE user_id=?", (user_id,)) as cur:
-            data["privacy_settings"] = await cur.fetchone()
+        async with db.execute(
+            "SELECT allow_profile, allow_history, allow_llm, allow_telemetry, allow_error_reports, "
+            "history_ttl_hours, telemetry_ttl_hours, plan_cache_ttl_hours, feedback_ttl_days, updated_at "
+            "FROM user_privacy_settings WHERE user_id=?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                data["privacy_settings"] = {
+                    "allow_profile": bool(row[0]), "allow_history": bool(row[1]),
+                    "allow_llm": bool(row[2]), "allow_telemetry": bool(row[3]),
+                    "allow_error_reports": bool(row[4]), "history_ttl_hours": row[5],
+                    "telemetry_ttl_hours": row[6], "plan_cache_ttl_hours": row[7],
+                    "feedback_ttl_days": row[8], "updated_at": row[9]
+                }
+            else:
+                data["privacy_settings"] = None
 
     # 2. Cache DB
     async with aiosqlite.connect(CACHE_DB) as db:
@@ -449,9 +487,12 @@ async def export_user_data(user_id: int) -> dict:
     data["feedback_files"] = []
     if os.path.isdir(feedback_dir):
         for f in os.listdir(feedback_dir):
-            if f.endswith(f"_{user_id}.json"):
-                with open(os.path.join(feedback_dir, f), "r", encoding="utf-8") as j:
-                    data["feedback_files"].append({"filename": f, "content": json.load(j)})
+            if f.endswith(".json") and f"_{user_id}_" in f:
+                try:
+                    with open(os.path.join(feedback_dir, f), "r", encoding="utf-8") as j:
+                        data["feedback_files"].append({"filename": f, "content": json.load(j)})
+                except Exception as e:
+                    log.error("Failed to export feedback file %s: %s", f, e)
     
     return data
 
@@ -480,53 +521,109 @@ async def delete_user_data(user_id: int) -> bool:
     feedback_dir = "data/feedback"
     if os.path.isdir(feedback_dir):
         for f in os.listdir(feedback_dir):
-            if f.endswith(f"_{user_id}.json"):
-                os.remove(os.path.join(feedback_dir, f))
+            if f.endswith(".json") and f"_{user_id}_" in f:
+                try:
+                    os.remove(os.path.join(feedback_dir, f))
+                except Exception as e:
+                    log.error("Failed to delete feedback file %s: %s", f, e)
     
     return True
 
 
 async def run_gdpr_cleanup() -> dict:
-    """Bereinigt abgelaufene Daten basierend auf TTLs in user_privacy_settings."""
+    """Bereinigt abgelaufene Daten basierend auf individuellen TTLs."""
     stats = {"histories": 0, "telemetry": 0, "plan_cache": 0, "feedback": 0}
     now = datetime.now()
+    
+    # Defaults
+    D_HIST = 168
+    D_TELEM = 24
+    D_PLAN = 4
+    D_FEED = 30
 
-    # Wir holen alle User mit individuellen TTLs
+    # 1. Alle Custom-Settings abrufen
     async with aiosqlite.connect(STATE_DB) as db:
-        async with db.execute("SELECT user_id, history_ttl_hours FROM user_privacy_settings") as cur:
-            rows = await cur.fetchall()
-            for uid, ttl in rows:
-                cutoff = (now - timedelta(hours=ttl)).isoformat()
-                res = await db.execute("DELETE FROM histories WHERE chat_id=? AND updated_at < ?", (uid, cutoff))
-                stats["histories"] += res.rowcount
+        async with db.execute(
+            "SELECT user_id, history_ttl_hours, telemetry_ttl_hours, "
+            "plan_cache_ttl_hours, feedback_ttl_days FROM user_privacy_settings"
+        ) as cur:
+            settings_rows = await cur.fetchall()
+    
+    custom_uids = [r[0] for r in settings_rows]
+
+    # 2. Histories (STATE_DB)
+    async with aiosqlite.connect(STATE_DB) as db:
+        for uid, h_ttl, t_ttl, p_ttl, f_ttl in settings_rows:
+            cutoff = (now - timedelta(hours=h_ttl)).isoformat()
+            res = await db.execute("DELETE FROM histories WHERE chat_id=? AND updated_at < ?", (uid, cutoff))
+            stats["histories"] += res.rowcount
+        
+        cutoff_def = (now - timedelta(hours=D_HIST)).isoformat()
+        if custom_uids:
+            placeholders = ",".join(["?"] * len(custom_uids))
+            query = f"DELETE FROM histories WHERE updated_at < ? AND chat_id NOT IN ({placeholders})"
+            res = await db.execute(query, [cutoff_def] + custom_uids)
+        else:
+            res = await db.execute("DELETE FROM histories WHERE updated_at < ?", (cutoff_def,))
+        stats["histories"] += res.rowcount
         await db.commit()
 
-    # Telemetrie global (24h Default für alle, die nichts anderes sagen)
+    # 3. Telemetry (TELEMETRY_DB)
     async with aiosqlite.connect(TELEMETRY_DB) as db:
-        # Hier ist es schwerer pro User zu löschen ohne Join über DBs. 
-        # Wir nehmen einen sicheren Default von 7 Tagen für alle, falls nicht anders konfiguriert.
-        cutoff = (now - timedelta(days=7)).isoformat()
-        res = await db.execute("DELETE FROM requests WHERE ts < ?", (cutoff,))
+        for uid, h_ttl, t_ttl, p_ttl, f_ttl in settings_rows:
+            cutoff = (now - timedelta(hours=t_ttl)).isoformat()
+            res = await db.execute("DELETE FROM requests WHERE user_id=? AND ts < ?", (uid, cutoff))
+            stats["telemetry"] += res.rowcount
+        
+        cutoff_def = (now - timedelta(hours=D_TELEM)).isoformat()
+        if custom_uids:
+            placeholders = ",".join(["?"] * len(custom_uids))
+            query = f"DELETE FROM requests WHERE ts < ? AND user_id NOT IN ({placeholders})"
+            res = await db.execute(query, [cutoff_def] + custom_uids)
+        else:
+            res = await db.execute("DELETE FROM requests WHERE ts < ?", (cutoff_def,))
         stats["telemetry"] += res.rowcount
         await db.commit()
 
-    # Plan Cache global (24h)
+    # 4. Plan Cache (CACHE_DB)
     async with aiosqlite.connect(CACHE_DB) as db:
-        cutoff = (now - timedelta(hours=24)).isoformat()
-        res = await db.execute("DELETE FROM user_plan_cache WHERE cached_at < ?", (cutoff,))
+        for uid, h_ttl, t_ttl, p_ttl, f_ttl in settings_rows:
+            cutoff = (now - timedelta(hours=p_ttl)).isoformat()
+            res = await db.execute("DELETE FROM user_plan_cache WHERE user_id=? AND cached_at < ?", (uid, cutoff))
+            stats["plan_cache"] += res.rowcount
+        
+        cutoff_def = (now - timedelta(hours=D_PLAN)).isoformat()
+        if custom_uids:
+            placeholders = ",".join(["?"] * len(custom_uids))
+            query = f"DELETE FROM user_plan_cache WHERE cached_at < ? AND user_id NOT IN ({placeholders})"
+            res = await db.execute(query, [cutoff_def] + custom_uids)
+        else:
+            res = await db.execute("DELETE FROM user_plan_cache WHERE cached_at < ?", (cutoff_def,))
         stats["plan_cache"] += res.rowcount
         await db.commit()
 
-    # Feedback Files (30 Tage Default)
+    # 5. Feedback Files
     feedback_dir = "data/feedback"
     if os.path.isdir(feedback_dir):
+        ttl_map = {uid: f_ttl for uid, h_ttl, t_ttl, p_ttl, f_ttl in settings_rows}
         for f in os.listdir(feedback_dir):
             if f.endswith(".json"):
                 fpath = os.path.join(feedback_dir, f)
+                parts = f.replace(".json", "").split("_")
+                days = D_FEED
+                if len(parts) >= 3:
+                    try:
+                        uid = int(parts[2])
+                        days = ttl_map.get(uid, D_FEED)
+                    except ValueError: pass
+                
                 mtime = datetime.fromtimestamp(os.path.getmtime(fpath))
-                if (now - mtime).days > 30:
-                    os.remove(fpath)
-                    stats["feedback"] += 1
+                if (now - mtime).days > days:
+                    try:
+                        os.remove(fpath)
+                        stats["feedback"] += 1
+                    except Exception as e:
+                        log.error("Failed to cleanup feedback file %s: %s", f, e)
     
     return stats
 
