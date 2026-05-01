@@ -9,6 +9,7 @@ dist/
 .ruff_cache/
 data/
 logs/
+!.gemini/logs/
 
 # KI-spezifische Dateien (nur lokal)
 .claude/

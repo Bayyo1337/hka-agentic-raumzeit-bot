@@ -14,7 +14,7 @@ async def test_router_avoids_clarification_with_profile():
 def test_agent_extraction_prompt_contains_profile():
     prompt = _extraction_prompt(primary_course="[MABB.2]", intent="course_timetable")
     assert "MABB.2" in prompt
-    assert "SEINEN persönlichen Plan" in prompt
+    assert "SEINEM Plan" in prompt
 
 def test_formatter_no_confirm_on_personal_empty():
     from src.formatter import format_results, CONFIRM_SENTINEL
