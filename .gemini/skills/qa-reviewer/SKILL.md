@@ -11,7 +11,7 @@ Du bist der Qualitätswächter. Deine Aufgabe ist es, die Arbeit des `issue-fixe
 ## Workflow
 
 ### 1. Review & Diff-Analyse
-Lies das `.gemini/session_log.md`, um den Kontext der Änderungen zu verstehen.
+Lies das aktuelle Log in `.gemini/logs/` (die neueste Datei nach Datum), um den Kontext der Änderungen zu verstehen. Trage neue Session-Ergebnisse in `.gemini/logs/YYYY-MM-DD.md` ein und aktualisiere den Index `.gemini/session_log.md`.
 - Prüfe den aktuellen Diff: `git diff HEAD`.
 - Überprüfe, ob der Fixer Seiteneffekte verursacht hat oder gegen Projekt-Mandate (aus `gemini.md`) verstößt.
 
@@ -19,7 +19,7 @@ Lies das `.gemini/session_log.md`, um den Kontext der Änderungen zu verstehen.
 Führe das gesamte Test-Set aus, um sicherzustellen, dass keine Regressionen entstanden sind:
 - **E2E-Tests:** Führe `make test-e2e` aus. Schlagen Tests fehl:
     - Analysiere den Output: Welches Keyword fehlt? Welches Tool wurde falsch gerufen?
-    - Erstelle einen kurzen Report im `session_log.md` über den Fehlschlag.
+    - Erstelle einen kurzen Report im aktuellen Log in `.gemini/logs/` über den Fehlschlag.
     - Committe keinesfalls, bevor alle 9+ Cases grün sind.
 - `make check` oder `make test` (falls vorhanden).
 - Führe das `scripts/repro_issue.py` ein letztes Mal aus (falls es sich um einen Bugfix handelt).
@@ -31,7 +31,7 @@ Wenn alle Prüfungen erfolgreich sind:
 - Bereite eine aussagekräftige Commit-Message vor (z.B. "fix(tools): resolve course name mapping for machine engineering").
 - Stufe die geänderten Dateien ein (`git add ...`).
 - Committe die Änderungen (`git commit -m "..."`).
-- **Wichtig:** Protokolliere den Commit-Hash im `session_log.md`.
+- **Wichtig:** Protokolliere den Commit-Hash im aktuellen Log in `.gemini/logs/`.
 
 ### 4. Dokumentation & Abschluss (Janitor-Modus)
 Dies ist der finale Schritt der Kette. Verschiebe die Quelldatei erst, wenn der Commit und Push erfolgreich waren.
@@ -53,7 +53,7 @@ Falls dir ein Spec-Dateipfad (aus `features/specs/`) übergeben wurde:
 Nach dem erfolgreichen Commit und der Dokumentation:
 - Prüfe, ob ein Remote-Repository konfiguriert ist: `git remote -v`.
 - Versuche den aktuellen Branch (bevorzugt `gemini`) zu pushen: `git push origin $(git branch --show-current)`.
-- Falls der Push fehlschlägt (z.B. wegen fehlender Berechtigungen oder nötigen Pulls): Dokumentiere den Fehler im `session_log.md` und informiere den Nutzer, aber brich die Session nicht mit einem harten Fehler ab (der Commit ist ja bereits erfolgt).
+- Falls der Push fehlschlägt (z.B. wegen fehlender Berechtigungen oder nötigen Pulls): Dokumentiere den Fehler im aktuellen Log in `.gemini/logs/` und informiere den Nutzer, aber brich die Session nicht mit einem harten Fehler ab (der Commit ist ja bereits erfolgt).
 
 ## Wichtige Mandate
 - **E2E-Hoheit:** Du bist für die Aktualität der `tests/fixtures/e2e_cases.json` verantwortlich. Jedes neue Feature braucht einen Case.
