@@ -755,10 +755,23 @@ async def get_lecturer_info(account: str) -> dict:
 
 
 async def get_departments() -> list:
-    async with httpx.AsyncClient(base_url=settings.raumzeit_base_url) as c:
-        r = await c.get("/api/v1/departments/public")
-        r.raise_for_status()
-        return r.json()
+    try:
+        async with httpx.AsyncClient(base_url=settings.raumzeit_base_url, timeout=10) as c:
+            r = await c.get("/api/v1/departments/public")
+            r.raise_for_status()
+            return r.json()
+    except Exception as e:
+        log.warning(f"Raumzeit API: /departments/public ist down ({e}). Nutze Fallback.")
+        # Da wir die Langnamen für die UI brauchen, nutzen wir ein statisches Mapping der 6 Fakultäten.
+        faculties = [
+            {"name": "AB",  "longName": "Architektur und Bauwesen", "faculty": True},
+            {"name": "EIT", "longName": "Elektro- und Informationstechnik", "faculty": True},
+            {"name": "IWI", "longName": "Informatik und Wirtschaftsinformatik", "faculty": True},
+            {"name": "IMM", "longName": "Informationsmanagement und Medien", "faculty": True},
+            {"name": "MMT", "longName": "Maschinenbau und Mechatronik", "faculty": True},
+            {"name": "W",   "longName": "Wirtschaftswissenschaften", "faculty": True},
+        ]
+        return faculties
 
 
 async def get_courses_of_study(faculty: str | None = None) -> list:
@@ -950,7 +963,8 @@ async def ping_api() -> dict:
         auth_ms = int((time.monotonic() - start) * 1000)
         t2 = time.monotonic()
         async with _client(token) as c:
-            r = await c.get("/api/v1/departments/public")
+            # Wir nutzen /coursesofstudy statt /departments, da letzteres oft 500er wirft
+            r = await c.get("/api/v1/coursesofstudy/public")
         api_ms = int((time.monotonic() - t2) * 1000)
         return {"ok": r.status_code < 400, "auth_ms": auth_ms, "api_ms": api_ms, "status": r.status_code}
     except Exception as exc:

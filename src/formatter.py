@@ -586,9 +586,68 @@ _FORMATTERS = {
 }
 
 
-def format_results(collected: list[tuple[str, dict]], user_message: str) -> str:
+def _filter_bookings(bookings: list[dict], user_config: list[dict]) -> list[dict]:
+    """Filters bookings based on excluded groups and modules."""
+    if not user_config: return bookings
+    
+    filtered = []
+    for b in bookings:
+        b_group = b.get("gruppe", "")
+        b_mod = b.get("module") or b.get("name") or ""
+        
+        # Find matching config
+        matched_cfg = None
+        for cfg in user_config:
+            if b_group.startswith(cfg["key"]):
+                matched_cfg = cfg
+                break
+        
+        if matched_cfg:
+            if b_group in matched_cfg.get("excluded_groups", []):
+                continue
+            if b_mod in matched_cfg.get("excluded_modules", []):
+                continue
+        
+        filtered.append(b)
+    return filtered
+
+
+def format_results(collected: list[tuple[str, dict]], user_message: str, user_config: list[dict] = None) -> str:
     if not collected:
         return "Ich konnte keine Daten abrufen. Bitte versuche es erneut."
+    
+    # Handle multiple course timetable calls (Personal Plan)
+    course_calls = [(n, r) for n, r in collected if n == "get_course_timetable"]
+    if len(course_calls) > 1 or (len(course_calls) == 1 and user_config):
+        all_bookings = []
+        labels = set()
+        for _, r in course_calls:
+            if "error" not in r:
+                all_bookings.extend(r.get("bookings", []))
+                labels.add(r.get("queried_date", ""))
+        
+        if not all_bookings:
+            return "📅 *Dein Stundenplan*\nKeine Belegungen gefunden."
+            
+        if user_config:
+            all_bookings = _filter_bookings(all_bookings, user_config)
+            
+        label = " & ".join(filter(None, labels)) or "Heutiger Plan"
+        from collections import defaultdict
+        by_date = defaultdict(list)
+        for b in all_bookings:
+            date_str = b.get("date") or b.get("start", "").split("T")[0]
+            if date_str:
+                by_date[date_str].append(b)
+                
+        lines = [f"📅 *Dein Stundenplan* ({label})"]
+        for date_str in sorted(by_date.keys()):
+            day_label = _fmt_date(date_str)
+            lines.append(f"\n*{day_label}*")
+            lines.extend(_render_timeline(by_date[date_str]))
+            
+        return "\n".join(lines).strip()
+
     room_calls = [(n, r) for n, r in collected if n == "get_room_timetable"]
     if len(room_calls) > 1:
         return _fmt_room_multi([r for _, r in room_calls])
@@ -601,10 +660,13 @@ def format_results(collected: list[tuple[str, dict]], user_message: str) -> str:
     fmt = _FORMATTERS.get(name)
     return fmt(result) if fmt else str(result)
 
-def format_weekly_plan(bookings: list[dict]) -> list[str]:
+def format_weekly_plan(bookings: list[dict], user_config: list[dict] = None) -> list[str]:
     """Erzeugt eine Liste von Strings (einer pro Tag) für die Wochenübersicht."""
     if not bookings:
         return ["📅 *Dein Stundenplan*\n✅ Keine Vorlesungen in dieser Woche gefunden."]
+
+    if user_config:
+        bookings = _filter_bookings(bookings, user_config)
 
     from collections import defaultdict
     by_date = defaultdict(list)

@@ -95,7 +95,7 @@ _USER_COMMANDS = [
     BotCommand("bug", "Fehler melden oder Feedback geben"),
     BotCommand("mensa", "Aktueller Speiseplan der Mensa Moltke"),
     BotCommand("myplan", "Dein persönlicher Stundenplan"),
-    BotCommand("setcourse", "Eigener Studiengang hinterlegen"),
+    BotCommand("setcourses", "Eigene Studiengänge & Filter verwalten"),
     BotCommand("stats", "Nutzungsstatistik & Profil"),
     BotCommand("reset", "Gesprächsverlauf löschen"),
 ]
@@ -133,8 +133,8 @@ def _command_help(is_admin: bool) -> str:
     ]
     if _personal_features[0]:
         lines.insert(-2, "/myplan – Deinen gespeicherten Wochenplan zeigen")
-        lines.insert(-2, "/setcourse – Deinen Studiengang speichern (interaktiv)")
-        lines.insert(-2, "/setcourse [Key] – Kurs direkt speichern (z.B. `/setcourse MABB.7`) ")
+        lines.insert(-2, "/setcourses – Deine Kurse & Filter verwalten (interaktiv)")
+        lines.insert(-2, "/setcourses add [Key] – Kurs direkt speichern (z.B. `/setcourses add MABB.7`) ")
 
     if is_admin:
         lines += [
@@ -167,7 +167,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "_\"Welche Vorlesungen hat MABB Semester 2 morgen?\"_\n"
         "_\"Was gibt es heute in der Mensa?\"_\n\n"
         "Nutze `/help` für eine Liste aller Befehle.\n"
-        "Nutze `/setcourse`, um dein Studium für personalisierte Fragen zu hinterlegen.\n\n"
+        "Nutze `/setcourses`, um dein Studium für personalisierte Fragen zu hinterlegen.\n\n"
         "📄 [Quellcode (AGPL-3.0)](https://github.com/Bayyo1337/hka-agentic-raumzeit-bot)"
     )
     msg = await update.message.reply_text(text, parse_mode="Markdown")
@@ -205,7 +205,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except:
         courses = [course_raw] if course_raw else []
     
-    course_str = f"\n🎓 *Deine Kurse:* {', '.join([f'`{c}`' for c in courses])}" if courses else "\n🎓 *Deine Kurse:* Noch keine (nutze /setcourse)"
+    course_str = f"\n🎓 *Deine Kurse:* {', '.join([f'`{c}`' for c in courses])}" if courses else "\n🎓 *Deine Kurse:* Noch keine (nutze /setcourses)"
     
     await update.message.reply_text(
         f"📊 *Deine Statistik*{course_str}\n"
@@ -216,21 +216,78 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-async def cmd_setcourse(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Interaktiver Assistent oder Shortcut zum Festlegen des eigenen Studiengangs."""
+async def cmd_setcourses(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Verwaltet die gespeicherten Kurse und Filter."""
     if not _personal_features[0]:
         await update.message.reply_text("💡 Dieses Feature ist aktuell deaktiviert.")
         return
     
-    # Shortcut-Logik: /setcourse MABB.7
+    user_id = update.effective_user.id
+    
     if context.args:
-        full_key = context.args[0].upper().replace("_", ".")
-        user_id = update.effective_user.id
-        await db.add_primary_course(user_id, full_key)
-        await update.message.reply_text(f"✅ Kurs `{full_key}` wurde zu deinem Profil hinzugefügt.")
-        return
+        sub = context.args[0].lower()
+        if sub == "add" and len(context.args) > 1:
+            key = context.args[1].upper().replace("_", ".")
+            await db.add_course_to_config(user_id, key)
+            await update.message.reply_text(f"✅ Kurs `{key}` hinzugefügt.")
+            return
+        elif sub == "remove" and len(context.args) > 1:
+            key = context.args[1].upper().replace("_", ".")
+            await db.remove_course_from_config(user_id, key)
+            await update.message.reply_text(f"✅ Kurs `{key}` entfernt.")
+            return
+        elif sub == "clear":
+            await db.save_user_course_config(user_id, [])
+            await update.message.reply_text("✅ Alle Kurse gelöscht.")
+            return
+        elif sub == "list":
+            config = await db.get_user_course_config(user_id)
+            if not config:
+                await update.message.reply_text("🎓 Du hast noch keine Kurse hinterlegt.")
+            else:
+                lines = ["🎓 *Deine gespeicherten Kurse:*"]
+                for c in config:
+                    line = f"• `{c['key']}`"
+                    if c.get("excluded_modules") or c.get("excluded_groups"):
+                        line += " (gefiltert)"
+                    lines.append(line)
+                await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+            return
 
-    await _show_faculty_selection(update.message.reply_text)
+    await _show_setcourses_menu(update.message.reply_text, user_id)
+
+
+async def _show_setcourses_menu(reply_func, user_id: int, text_prefix=""):
+    config = await db.get_user_course_config(user_id)
+    
+    lines = [f"{text_prefix}⚙️ *Kurs-Management*", ""]
+    if not config:
+        lines.append("_Noch keine Kurse hinterlegt._")
+    else:
+        for c in config:
+            line = f"• `{c['key']}`"
+            filters = []
+            if c.get("excluded_modules"): filters.append(f"{len(c['excluded_modules'])} Module")
+            if c.get("excluded_groups"): filters.append(f"{len(c['excluded_groups'])} Gruppen")
+            if filters:
+                line += " 🛠 " + ", ".join(filters)
+            lines.append(line)
+    
+    lines.append("\nWas möchtest du tun?")
+    
+    keyboard = [
+        [InlineKeyboardButton("➕ Semester hinzufügen", callback_data="setc_more")],
+        [InlineKeyboardButton("🛠 Veranstaltungen filtern", callback_data="setc_filter_select")],
+        [InlineKeyboardButton("🗑 Semester entfernen", callback_data="setc_rem_select")],
+        [InlineKeyboardButton("🧼 Alles löschen", callback_data="setc_clear")],
+        [InlineKeyboardButton("✅ Fertig", callback_data="setc_done")]
+    ]
+    
+    await reply_func(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
 
 
 async def _show_faculty_selection(reply_func, text_prefix=""):
@@ -246,7 +303,7 @@ async def _show_faculty_selection(reply_func, text_prefix=""):
             display_name = f.get("longName") or fac_id
             keyboard.append([InlineKeyboardButton(display_name, callback_data=f"setc_fac:{fac_id}")])
         
-        keyboard.append([InlineKeyboardButton("❌ Abbrechen / Beenden", callback_data="setc_abort")])
+        keyboard.append([InlineKeyboardButton("❌ Abbrechen / Beenden", callback_data="setc_main")])
         reply_markup = InlineKeyboardMarkup(keyboard)
         await reply_func(
             f"{text_prefix}*Schritt 1 von 3:* Wähle eine Fakultät zum Hinzufügen:", 
@@ -255,6 +312,46 @@ async def _show_faculty_selection(reply_func, text_prefix=""):
         )
     except Exception as e:
         await reply_func(f"⚠️ Fehler: {e}")
+
+
+async def _show_course_filter_options(query, user_id: int, key: str):
+    # Wir brauchen die Bookings um zu wissen was es gibt
+    res = await raumzeit.get_course_timetable(key)
+    bookings = res.get("bookings", [])
+    
+    modules = sorted(list(set(b.get("name") for b in bookings if b.get("name"))))
+    groups = sorted(list(set(b.get("group") for b in bookings if b.get("group"))))
+    
+    config = await db.get_user_course_config(user_id)
+    course_cfg = next((c for c in config if c["key"].upper() == key.upper()), None)
+    if not course_cfg:
+        await query.edit_message_text("⚠️ Kurs nicht gefunden.")
+        return
+
+    excl_m = course_cfg.get("excluded_modules", [])
+    excl_g = course_cfg.get("excluded_groups", [])
+    
+    lines = [f"🛠 *Filter für {key}*", "", "Klicke auf eine Veranstaltung/Gruppe, um sie zu de-/aktivieren. Deaktivierte Elemente werden im Plan ausgeblendet.", ""]
+    
+    keyboard = []
+    
+    if groups:
+        lines.append("*Gruppen:*")
+        for g in groups:
+            status = "❌" if g in excl_g else "✅"
+            keyboard.append([InlineKeyboardButton(f"{status} Gruppe {g}", callback_data=f"setc_tg:{key}:{g}")])
+    
+    if modules:
+        lines.append("*Module:*")
+        for m in modules:
+            status = "❌" if m in excl_m else "✅"
+            # Text kürzen falls zu lang für Button
+            display_m = (m[:35] + '..') if len(m) > 37 else m
+            keyboard.append([InlineKeyboardButton(f"{status} {display_m}", callback_data=f"setc_tm:{key}:{m}")])
+            
+    keyboard.append([InlineKeyboardButton("⬅️ Zurück zum Menü", callback_data="setc_main")])
+    
+    await query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 
 async def cmd_bug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -268,7 +365,7 @@ async def cmd_bug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Verarbeitet die Klicks auf die Inline-Buttons des setcourse-Assistenten."""
+    """Verarbeitet die Klicks auf die Inline-Buttons des setcourses-Assistenten."""
     query = update.callback_query
     await query.answer()
     
@@ -315,26 +412,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     elif data.startswith("setc_add:"):
         full_key = data.split(":")[1]
-        await db.add_primary_course(user_id, full_key)
-        u = await db.get_user(user_id)
-        import json
-        try:
-            courses = json.loads(u["primary_course"]) if u["primary_course"] else []
-            if not isinstance(courses, list): courses = [str(courses)]
-        except:
-            courses = [u["primary_course"]] if u["primary_course"] else []
-        
-        course_list = ", ".join(f"`{c}`" for c in courses)
-        keyboard = [
-            [InlineKeyboardButton("➕ Weiteres Semester hinzufügen", callback_data="setc_more")],
-            [InlineKeyboardButton("✅ Fertig & Speichern", callback_data="setc_done")],
-            [InlineKeyboardButton("🗑 Alle löschen & neu starten", callback_data="setc_clear")]
-        ]
-        await query.edit_message_text(
-            f"✨ *Stundenplan konfiguriert*\n\nAktuell ausgewählt: {course_list}\n\nMöchtest du noch ein Semester hinzufügen oder bist du fertig?",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
+        await db.add_course_to_config(user_id, full_key)
+        await _show_setcourses_menu(query.edit_message_text, user_id, f"✅ Kurs `{full_key}` hinzugefügt.\n\n")
 
     elif data == "setc_more":
         await _show_faculty_selection(query.edit_message_text)
@@ -343,8 +422,59 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text("✅ Deine Einstellungen wurden gespeichert. Du kannst mich nun jederzeit fragen: 'Was habe ich heute?'.")
 
     elif data == "setc_clear":
-        await db.set_primary_courses(user_id, [])
-        await _show_faculty_selection(query.edit_message_text, "🗑 Liste geleert.\n\n")
+        await db.save_user_course_config(user_id, [])
+        await _show_setcourses_menu(query.edit_message_text, user_id, "🧼 Alle Kurse gelöscht.\n\n")
+
+    elif data == "setc_rem_select":
+        config = await db.get_user_course_config(user_id)
+        if not config:
+            await query.answer("Keine Kurse zum Entfernen.")
+            return
+        keyboard = [[InlineKeyboardButton(f"🗑 {c['key']}", callback_data=f"setc_rem_course:{c['key']}")] for c in config]
+        keyboard.append([InlineKeyboardButton("⬅️ Zurück", callback_data="setc_main")])
+        await query.edit_message_text("Welchen Kurs möchtest du entfernen?", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data.startswith("setc_rem_course:"):
+        key = data.split(":")[1]
+        await db.remove_course_from_config(user_id, key)
+        await _show_setcourses_menu(query.edit_message_text, user_id, f"✅ Kurs `{key}` entfernt.\n\n")
+
+    elif data == "setc_filter_select":
+        config = await db.get_user_course_config(user_id)
+        if not config:
+            await query.answer("Zuerst einen Kurs hinzufügen!")
+            return
+        keyboard = [[InlineKeyboardButton(f"🛠 {c['key']}", callback_data=f"setc_filter_course:{c['key']}")] for c in config]
+        keyboard.append([InlineKeyboardButton("⬅️ Zurück", callback_data="setc_main")])
+        await query.edit_message_text("Für welchen Kurs möchtest du Veranstaltungen filtern?", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data.startswith("setc_filter_course:"):
+        key = data.split(":")[1]
+        await _show_course_filter_options(query, user_id, key)
+
+    elif data.startswith("setc_tg:") or data.startswith("setc_tm:"):
+        parts = data.split(":")
+        mode = parts[0]
+        key = parts[1]
+        val = parts[2]
+        
+        config = await db.get_user_course_config(user_id)
+        for c in config:
+            if c["key"].upper() == key.upper():
+                if mode == "setc_tg":
+                    excl = c.setdefault("excluded_groups", [])
+                    if val in excl: excl.remove(val)
+                    else: excl.append(val)
+                else:
+                    excl = c.setdefault("excluded_modules", [])
+                    if val in excl: excl.remove(val)
+                    else: excl.append(val)
+                break
+        await db.save_user_course_config(user_id, config)
+        await _show_course_filter_options(query, user_id, key)
+
+    elif data == "setc_main":
+        await _show_setcourses_menu(query.edit_message_text, user_id)
 
     elif data.startswith("err_save:"):
         if not admin._is_admin(user_id):
@@ -396,23 +526,16 @@ async def cmd_myplan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
         
     user_id = update.effective_user.id
-    u = await db.get_user(user_id)
-    raw = u.get("primary_course") if u else None
-    
-    try:
-        courses = json.loads(raw) if raw else []
-        if not isinstance(courses, list): courses = [str(raw)]
-    except:
-        courses = [raw] if raw else []
+    config = await db.get_user_course_config(user_id)
         
-    if not courses or not courses[0]:
-        await update.message.reply_text("🎓 Du hast noch keine Kurse hinterlegt. Nutze /setcourse um dies zu tun.")
+    if not config:
+        await update.message.reply_text("🎓 Du hast noch keine Kurse hinterlegt. Nutze /setcourses um dies zu tun.")
         return
 
     # Check Cache
     cached = await db.get_user_plan_cache(user_id)
     if cached:
-        day_msgs = formatter.format_weekly_plan(cached.get("bookings", []))
+        day_msgs = formatter.format_weekly_plan(cached.get("bookings", []), user_config=config)
         for msg in day_msgs:
             try:
                 await update.message.reply_text(msg, parse_mode="Markdown")
@@ -423,8 +546,8 @@ async def cmd_myplan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # No Cache -> Fetch from API
     msg = await update.message.reply_text("🔄 Rufe deinen Stundenplan ab...")
     all_bookings = []
-    for course in courses:
-        res = await raumzeit.get_course_timetable(course)
+    for c in config:
+        res = await raumzeit.get_course_timetable(c["key"])
         if "bookings" in res:
             all_bookings.extend(res["bookings"])
     
@@ -432,7 +555,7 @@ async def cmd_myplan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await db.save_user_plan_cache(user_id, {"bookings": all_bookings})
     
     # Format and Send
-    day_msgs = formatter.format_weekly_plan(all_bookings)
+    day_msgs = formatter.format_weekly_plan(all_bookings, user_config=config)
     await msg.delete()
     for m in day_msgs:
         try:
@@ -567,8 +690,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 log.warning("Router Failed: %s", router_exc)
 
         reply, tok_in, tok_out, collected_results = await agent.run(
-            text, history, user_label=user_label, primary_course=primary_course, intent=intent
+            text, history, user_id=user_id, user_label=user_label, primary_course=primary_course, intent=intent
         )
+        # Re-format with user config for filtering
+        config = await db.get_user_course_config(user_id) if u else []
+        reply = formatter.format_results(collected_results, text, user_config=config)
+        
+        # Update history with filtered reply
+        if history and history[-1]["role"] == "assistant":
+            history[-1]["content"] = reply
+
         await db.save_history(chat_id, history)
         await db.add_tokens(user_id, tok_in, tok_out)
         
@@ -751,7 +882,7 @@ async def main_async() -> None:
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("bug", cmd_bug))
     app.add_handler(CommandHandler("mensa", cmd_mensa))
-    app.add_handler(CommandHandler("setcourse", cmd_setcourse))
+    app.add_handler(CommandHandler("setcourses", cmd_setcourses))
     app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("myplan", cmd_myplan))

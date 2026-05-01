@@ -128,6 +128,7 @@ Regeln zur Zeitrechnung:
         sections.append(f"""
 Fehler-Handling:
 - Wenn der Nutzer nach SEINEM persönlichen Plan fragt ("mein Plan", "was habe ich heute"), aber im 'Nutzer-Profil' unten steht 'Kein Kurs hinterlegt', darfst du keinen Kurs raten! Gib in diesem Fall exakt {{"error": "no_course"}} zurück.
+- Wenn der Nutzer SEINEN Plan abfragt und mehrere Kurse hinterlegt sind, MUSST du für JEDEN hinterlegten Kurs einen separaten `get_course_timetable` Call erzeugen.
 - WICHTIG: Wenn der Nutzer explizite Kurs-Keys (z.B. MABB, INFB) nennt, ist dies KEINE persönliche Anfrage. Führe das Tool ganz normal aus!""")
 
     # 4. Format & Kontext
@@ -172,7 +173,19 @@ def current_provider() -> str:
 MAX_HISTORY_EXCHANGES = 3
 MAX_TOOL_CALLS = 6
 
-async def run(user_message: str, history: list[dict], user_label: str = "", primary_course: str | None = None, intent: str = "smalltalk_fallback") -> tuple[str, int, int, list]:
+async def run(user_message: str, history: list[dict], user_id: int | None = None, user_label: str = "", primary_course: str | None = None, intent: str = "smalltalk_fallback") -> tuple[str, int, int, list]:
+    # Nutzer-Profil laden, falls user_id vorhanden
+    from src import db
+    u = await db.get_user(user_id) if user_id else None
+    config = await db.get_user_course_config(user_id) if user_id and u else []
+    
+    # Format config for prompt
+    if config:
+        keys = [c["key"] for c in config]
+        primary_course = f"[{', '.join(keys)}]"
+    elif u:
+        primary_course = u.get("primary_course")
+
     processed_history = []
     for msg in history:
         content = msg.get("content", "")

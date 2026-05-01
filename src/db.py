@@ -346,14 +346,14 @@ async def upsert_user(user_id: int, username: str, first_name: str) -> None:
 async def get_all_users() -> list[dict]:
     async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute(
-            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen, pending_intent, missing_entities "
+            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen, pending_intent, missing_entities, primary_course "
             "FROM users ORDER BY last_seen DESC"
         ) as cur:
             rows = await cur.fetchall()
     return [
         {"user_id": r[0], "username": r[1], "first_name": r[2],
          "banned": bool(r[3]), "custom_rate_limit": r[4], "last_seen": r[5],
-         "pending_intent": r[6], "missing_entities": r[7]}
+         "pending_intent": r[6], "missing_entities": r[7], "primary_course": r[8]}
         for r in rows
     ]
 
@@ -361,7 +361,7 @@ async def get_all_users() -> list[dict]:
 async def get_user(user_id: int) -> dict | None:
     async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute(
-            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen, pending_intent, missing_entities "
+            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen, pending_intent, missing_entities, primary_course "
             "FROM users WHERE user_id=?", (user_id,)
         ) as cur:
             row = await cur.fetchone()
@@ -369,13 +369,13 @@ async def get_user(user_id: int) -> dict | None:
         return None
     return {"user_id": row[0], "username": row[1], "first_name": row[2],
             "banned": bool(row[3]), "custom_rate_limit": row[4], "last_seen": row[5],
-            "pending_intent": row[6], "missing_entities": row[7]}
+            "pending_intent": row[6], "missing_entities": row[7], "primary_course": row[8]}
 
 
 async def find_user_by_username(username: str) -> dict | None:
     async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute(
-            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen, pending_intent, missing_entities "
+            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen, pending_intent, missing_entities, primary_course "
             "FROM users WHERE LOWER(username)=LOWER(?)", (username.lstrip("@"),)
         ) as cur:
             row = await cur.fetchone()
@@ -383,7 +383,7 @@ async def find_user_by_username(username: str) -> dict | None:
         return None
     return {"user_id": row[0], "username": row[1], "first_name": row[2],
             "banned": bool(row[3]), "custom_rate_limit": row[4], "last_seen": row[5],
-            "pending_intent": row[6], "missing_entities": row[7]}
+            "pending_intent": row[6], "missing_entities": row[7], "primary_course": row[8]}
 
 async def set_intent_state(user_id: int, intent: str | None, missing_entities: dict | None = None) -> None:
     val_intent = intent
@@ -457,6 +457,40 @@ async def add_primary_course(user_id: int, course: str) -> None:
     if course.upper() not in [c.upper() for c in courses]:
         courses.append(course.upper())
         await set_primary_courses(user_id, courses)
+
+
+async def get_user_course_config(user_id: int) -> list[dict]:
+    """Returns a list of dicts: [{'key': 'MABB.7', 'excluded_groups': [], 'excluded_modules': []}]"""
+    u = await get_user(user_id)
+    raw = u.get("primary_course") if u else None
+    if not raw: return []
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, list): return []
+        # Migrate old list of strings to new dict format
+        return [{"key": item, "excluded_groups": [], "excluded_modules": []} if isinstance(item, str) else item for item in data]
+    except json.JSONDecodeError:
+        # Fallback if it was just a string
+        return [{"key": raw, "excluded_groups": [], "excluded_modules": []}]
+
+async def save_user_course_config(user_id: int, config: list[dict]) -> None:
+    val = json.dumps(config) if config else None
+    async with aiosqlite.connect(STATE_DB) as db:
+        await db.execute(
+            "UPDATE users SET primary_course=? WHERE user_id=?", (val, user_id)
+        )
+        await db.commit()
+
+async def add_course_to_config(user_id: int, course_key: str) -> None:
+    config = await get_user_course_config(user_id)
+    if not any(c["key"].upper() == course_key.upper() for c in config):
+        config.append({"key": course_key.upper(), "excluded_groups": [], "excluded_modules": []})
+        await save_user_course_config(user_id, config)
+
+async def remove_course_from_config(user_id: int, course_key: str) -> None:
+    config = await get_user_course_config(user_id)
+    config = [c for c in config if c["key"].upper() != course_key.upper()]
+    await save_user_course_config(user_id, config)
 
 
 # ── Cache-Extras (CACHE_DB) ──────────────────────────────────────────────────
