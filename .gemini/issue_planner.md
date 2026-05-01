@@ -46,4 +46,4 @@ Halte dich bei der Erstellung der Markdown-Dokumente strikt an die folgende Stru
 ## Wichtige Mandate
 - Gehe bei der Code-Recherche methodisch vor. Bevor du eine Lösung vorschlägst, musst du sicher sein, dass du den betroffenen Code vollständig verstanden hast.
 - Schreibe die Pläne immer auf Deutsch, technische Begriffe (wie *Root Cause*, *Return Value*, *Array*) können beibehalten werden.
-- Lege die Datei immer im Ordner `prompts/` ab (erstelle den Ordner, falls er nicht existiert).
+- Lege die Datei im Ordner `prompts/` ab. Nutze als Dateinamen: `problem-<slug>.md`, wobei `<slug>` eine kurze, kebab-case Beschreibung des Problems ist (z.B. `problem-prof-id-fallback.md`, `problem-mensa-allergen.md`). Überschreibe NIEMALS eine bestehende Datei – erstelle immer eine neue.

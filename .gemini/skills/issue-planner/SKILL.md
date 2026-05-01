@@ -20,7 +20,7 @@ Bevor du eine Lösung planst, erstelle ein minimales Python-Skript (z.B. `script
 Prüfe bei Event- oder Namensvergleichen, ob die radikale Normalisierung aus `gemini.md` angewendet werden muss (`re.sub(r'[^a-z0-9]', '', s.lower())`).
 
 ### 4. Dokumentation
-Erstelle `problem.md` oder `verbesserung.md` in `.gemini/prompts/`.
+Erstelle `problem-<slug>.md` oder `verbesserung-<slug>.md` in `.gemini/prompts/`. Nutze einen kurzen Slug in Kebab-Case. Überschreibe NIEMALS eine bestehende Datei.
 
 ## Dokumenten-Struktur
 ```markdown
