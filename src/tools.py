@@ -12,7 +12,7 @@ import os
 import re
 import time
 import unicodedata
-from datetime import date as _date, datetime as _datetime
+from datetime import date as _date, datetime as _datetime, timedelta
 import httpx
 from src.config import settings
 from src import db
@@ -580,9 +580,17 @@ async def get_room_timetable(room_name: str, date: str | None = None) -> dict:
 def _current_week_range() -> tuple[str, str]:
     """Gibt Mo–Fr der aktuellen Woche als ISO-Strings zurück."""
     today = _date.today()
-    monday = today - __import__("datetime").timedelta(days=today.weekday())
-    friday = monday + __import__("datetime").timedelta(days=4)
+    monday = today - timedelta(days=today.weekday())
+    friday = monday + timedelta(days=4)
     return monday.isoformat(), friday.isoformat()
+
+
+def _next_week_range() -> tuple[str, str]:
+    """Gibt Mo–Fr der NÄCHSTEN Kalenderwoche zurück."""
+    today = _date.today()
+    next_monday = today + timedelta(days=(7 - today.weekday()))
+    next_friday = next_monday + timedelta(days=4)
+    return next_monday.isoformat(), next_friday.isoformat()
 
 
 def _parse_ical(text: str, filter_date: str | None = None,
@@ -689,8 +697,21 @@ async def get_course_timetable(course_semester: str, date: str | None = None) ->
     else:
         variants = [course_semester]
 
-    # Ohne Datum → aktuelle Woche
-    if date:
+    # Datums-Logik
+    if date == "next_week":
+        week_from, week_to = _next_week_range()
+        fetch_kwargs = {"date_from": week_from, "date_to": week_to}
+        label = f"Nächste Woche ({week_from} – {week_to})"
+    elif date and "..." in date:
+        # Range-Support: "YYYY-MM-DD...YYYY-MM-DD"
+        try:
+            d_from, d_to = date.split("...")
+            fetch_kwargs = {"date_from": d_from, "date_to": d_to}
+            label = f"{d_from} bis {d_to}"
+        except ValueError:
+            fetch_kwargs = {"date": date}
+            label = date
+    elif date:
         fetch_kwargs = {"date": date}
         label = date
     else:

@@ -696,9 +696,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         reply, tok_in, tok_out, collected_results = await agent.run(
             text, history, user_id=user_id, user_label=user_label, primary_course=primary_course, intent=intent
         )
+        # Heuristik: Ist es eine persönliche Anfrage?
+        is_personal = any(kw in text.lower() for kw in ["mein", "ich", "heute", "morgen", "nächste woche"]) and primary_course is not None
+
         # Re-format with user config for filtering
         config = await db.get_user_course_config(user_id) if u else []
-        reply = formatter.format_results(collected_results, text, user_config=config)
+        reply = formatter.format_results(collected_results, text, user_config=config, is_personal=is_personal)
         
         # Update history with filtered reply
         if history and history[-1]["role"] == "assistant":

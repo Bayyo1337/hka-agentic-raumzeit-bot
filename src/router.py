@@ -84,8 +84,15 @@ Gib nur ein JSON-Objekt im angegebenen Schema zurück.
 Nachricht: "{text}"
 {profile_info}
 
-Regel: Wenn der Nutzer nach SEINEM Plan fragt (ich, mein, heute, morgen, wann habe ich) und ein Kurs im Profil steht, nutze IMMER agent_flow.
-Frage nur nach Klärung (ask_clarification), wenn der Intent klar ist, aber KEIN Kurs im Text UND das Profil leer ist.
+Regel: 
+1. PERSÖNLICHER PLAN: "Was habe ich...", "Wann habe ich...", "Mein Plan" -> Dies bezieht sich IMMER auf den persönlichen Stundenplan. Falls ein Kurs im Profil steht, nutze ZWINGEND intent="course_timetable" und action="agent_flow".
+2. KLÄRUNG: Nutze action="ask_clarification" NUR DANN, wenn der Intent (z.B. Raum, Kurs, Dozent) klar ist, aber der konkrete Wert fehlt UND auch nicht im Nutzer-Profil steht.
+3. EXPLIZIT: Wenn der Nutzer einen Kurs-Key (MABB.2) nennt, ist das ein normaler agent_flow.
+
+Beispiele:
+- "Was habe ich heute?" (Profil: [MABB.2]) -> {{"intent": "course_timetable", "confidence": 1.0, "entities": {{}}, "strategy": {{"action": "agent_flow", "reason": "Personal query with profile"}}}}
+- "Stundenplan morgen" (Profil: leer) -> {{"intent": "course_timetable", "confidence": 0.9, "entities": {{}}, "strategy": {{"action": "ask_clarification", "reason": "Kurs fehlt"}}}}
+- "Wann ist M-102 frei?" -> {{"intent": "room_timetable", "confidence": 1.0, "entities": {{"room_name": "M-102"}}, "strategy": {{"action": "direct_tool", "reason": "Explicit room"}}}}
 """
         # Wir nutzen ein kleines, schnelles Modell für das Routing (z.B. GPT-4o-mini oder gemini-1.5-flash)
         # Hier als Fallback verwenden wir das vom User konfigurierte Modell. Da der Router aber unabhängig vom Hauptagenten
@@ -116,6 +123,7 @@ Frage nur nach Klärung (ask_clarification), wenn der Intent klar ist, aber KEIN
             )
             raw = response.choices[0].message.content
             if raw:
+                log.debug("Router Raw LLM Output: %s", raw)
                 return RouterOutput.model_validate_json(raw)
         except Exception as e:
             log.warning("LLM Routing fehlgeschlagen: %s", e)

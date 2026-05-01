@@ -242,7 +242,7 @@ def _fmt_room_multi(results: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
-def _fmt_course(result: dict) -> str:
+def _fmt_course(result: dict, is_personal: bool = False) -> str:
     if "error" in result:
         return f"❌ {result['error']}"
 
@@ -253,6 +253,8 @@ def _fmt_course(result: dict) -> str:
     if not bookings:
         date_label = _fmt_date(queried_date) if queried_date and queried_date != "aktuelles Semester" else queried_date
         base = f"📅 *{course}*: Keine Einträge" + (f" für {date_label}" if date_label else "") + "."
+        if is_personal:
+            return base
         return base + "\n\n" + CONFIRM_SENTINEL
 
     from collections import defaultdict
@@ -612,7 +614,7 @@ def _filter_bookings(bookings: list[dict], user_config: list[dict]) -> list[dict
     return filtered
 
 
-def format_results(collected: list[tuple[str, dict]], user_message: str, user_config: list[dict] = None) -> str:
+def format_results(collected: list[tuple[str, dict]], user_message: str, user_config: list[dict] = None, is_personal: bool = False) -> str:
     if not collected:
         return "Ich konnte keine Daten abrufen. Bitte versuche es erneut."
     
@@ -627,7 +629,10 @@ def format_results(collected: list[tuple[str, dict]], user_message: str, user_co
                 labels.add(r.get("queried_date", ""))
         
         if not all_bookings:
-            return "📅 *Dein Stundenplan*\nKeine Belegungen gefunden."
+            msg = "📅 *Dein Stundenplan*\nKeine Belegungen gefunden."
+            if not is_personal:
+                msg += "\n\n" + CONFIRM_SENTINEL
+            return msg
             
         if user_config:
             all_bookings = _filter_bookings(all_bookings, user_config)
@@ -655,9 +660,13 @@ def format_results(collected: list[tuple[str, dict]], user_message: str, user_co
     if data_calls:
         name, result = data_calls[-1]
         fmt = _FORMATTERS.get(name)
+        if fmt == _fmt_course:
+            return _fmt_course(result, is_personal=is_personal)
         return fmt(result) if fmt else str(result)
     name, result = collected[-1]
     fmt = _FORMATTERS.get(name)
+    if fmt == _fmt_course:
+        return _fmt_course(result, is_personal=is_personal)
     return fmt(result) if fmt else str(result)
 
 def format_weekly_plan(bookings: list[dict], user_config: list[dict] = None) -> list[str]:
