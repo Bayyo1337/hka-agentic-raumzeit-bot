@@ -123,13 +123,13 @@ Regeln zur Zeitrechnung:
 - Datum in der Vergangenheit → meist Tippfehler, prüfe Folgemonat/-jahr
 - Max. 6 Calls gesamt""")
 
-    # 3. Fehler-Handling (Nur wenn Profil relevant ist)
+    # 3. Fehler-Handling & Priorisierung
     if intent in ["course_timetable", "smalltalk_fallback"]:
         sections.append(f"""
-Fehler-Handling:
-- Wenn der Nutzer nach SEINEM persönlichen Plan fragt ("mein Plan", "was habe ich heute"), aber im 'Nutzer-Profil' unten steht 'Kein Kurs hinterlegt', darfst du keinen Kurs raten! Gib in diesem Fall exakt {{"error": "no_course"}} zurück.
-- Wenn der Nutzer SEINEN Plan abfragt und mehrere Kurse hinterlegt sind, MUSST du für JEDEN hinterlegten Kurs einen separaten `get_course_timetable` Call erzeugen.
-- WICHTIG: Wenn der Nutzer explizite Kurs-Keys (z.B. MABB, INFB) nennt, ist dies KEINE persönliche Anfrage. Führe das Tool ganz normal aus!""")
+Fehler-Handling & Priorisierung:
+1. PERSÖNLICHE ANFRAGE: Wenn der Nutzer SEINEN persönlichen Plan abfragt ("mein Plan", "was habe ich heute", "wann habe ich..."), MUSST du die Kurse aus dem 'Nutzer-Profil' ({primary_course}) verwenden. Erzeuge für JEDEN Kurs einen `get_course_timetable` Call.
+2. EXPLIZITE ANFRAGE: Wenn der Nutzer einen konkreten Kurs-Key nennt (z.B. "MABB.2", "Maschinenbau Sem 3"), ignoriere das Profil und führe den Call nur für diesen Key aus.
+3. KEIN PROFIL: Wenn es eine persönliche Anfrage ist, aber das Profil 'Kein Kurs hinterlegt' zeigt, gib {{"error": "no_course"}} zurück.""")
 
     # 4. Format & Kontext
     sections.append("""
@@ -174,17 +174,17 @@ MAX_HISTORY_EXCHANGES = 3
 MAX_TOOL_CALLS = 6
 
 async def run(user_message: str, history: list[dict], user_id: int | None = None, user_label: str = "", primary_course: str | None = None, intent: str = "smalltalk_fallback") -> tuple[str, int, int, list]:
-    # Nutzer-Profil laden, falls user_id vorhanden
+    # Nutzer-Profil laden (immer aktuell aus DB, um History-Verwirrung zu vermeiden)
     from src import db
-    u = await db.get_user(user_id) if user_id else None
-    config = await db.get_user_course_config(user_id) if user_id and u else []
-    
-    # Format config for prompt
-    if config:
-        keys = [c["key"] for c in config]
-        primary_course = f"[{', '.join(keys)}]"
-    elif u:
-        primary_course = u.get("primary_course")
+    if user_id:
+        u = await db.get_user(user_id)
+        if u:
+            config = await db.get_user_course_config(user_id)
+            if config:
+                keys = [c["key"] for c in config]
+                primary_course = f"[{', '.join(keys)}]"
+            else:
+                primary_course = u.get("primary_course")
 
     processed_history = []
     for msg in history:
@@ -193,11 +193,19 @@ async def run(user_message: str, history: list[dict], user_id: int | None = None
         processed_history.append({"role": msg["role"], "content": content})
 
     model = _resolve_model()
-    messages = (
-        [{"role": "system", "content": _extraction_prompt(primary_course, intent)}]
-        + processed_history
-        + [{"role": "user", "content": user_message}]
-    )
+    # System Prompt mit aktuellem Profil
+    sys_prompt = _extraction_prompt(primary_course, intent)
+    messages = [{"role": "system", "content": sys_prompt}]
+    
+    if processed_history:
+        messages.extend(processed_history)
+        # Kontext-Reminder direkt vor der User-Nachricht
+        ctx = primary_course or "Kein Kurs hinterlegt"
+        user_content = f"[Nutzer-Profil: {ctx}] {user_message}"
+        messages.append({"role": "user", "content": user_content})
+    else:
+        messages.append({"role": "user", "content": user_message})
+
     log.debug("User %s (Intent: %s): %.80s", user_label, intent, user_message)
     log.debug("LLM Provider: %s | Model: %s", settings.llm_provider, model)
     log.debug("Vollständiger Prompt für LLM:\n%s", json.dumps(messages, indent=2, ensure_ascii=False))
