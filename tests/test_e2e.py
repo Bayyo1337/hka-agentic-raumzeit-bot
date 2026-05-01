@@ -1,13 +1,7 @@
-import os
 import json
-import tempfile
 import pytest
+import pytest_asyncio
 from pathlib import Path
-
-# Wir setzen DB_DIR auf ein temp directory, um echte DBs nicht zu verändern
-# Dies muss VOR dem Import von db/agent passieren.
-_TEMP_DB_DIR = tempfile.TemporaryDirectory()
-os.environ["DB_DIR"] = _TEMP_DB_DIR.name
 
 from src import db
 from src.router import router_instance
@@ -19,16 +13,6 @@ if not fixtures_path.exists():
 
 with open(fixtures_path, "r", encoding="utf-8") as f:
     test_cases = json.load(f)
-
-# Vor dem Ausführen der Tests initialisieren wir die DB
-@pytest.fixture(scope="session", autouse=True)
-def setup_db_session(request):
-    """Cleanup temp dir after all tests."""
-    def teardown():
-        _TEMP_DB_DIR.cleanup()
-    request.addfinalizer(teardown)
-
-import pytest_asyncio
 
 @pytest_asyncio.fixture(autouse=True)
 async def setup_test_db():

@@ -14,19 +14,19 @@ check:
 	uv run python scripts/setup/check.py
 
 test-e2e:
-	PYTHONPATH=. uv run pytest tests/test_e2e.py -v
+	uv run pytest tests/test_e2e.py -v
 
 test-e2e-dynamic:
 	@echo "📡 Erzeuge dynamische Test-Cases aus Realdaten..."
-	PYTHONPATH=. uv run python scripts/generate_e2e_fixtures.py
+	uv run python scripts/generate_e2e_fixtures.py
 	@echo "🧪 Starte E2E-Tests mit Kaltstart-Zwang..."
-	PYTHONPATH=. uv run pytest tests/test_e2e.py -v
+	uv run pytest tests/test_e2e.py -v
 
 reset:
 	@echo "Gesprächshistorie wird nicht persistent gespeichert – einfach Bot neu starten."
 
 lint:
-	uv run ruff check src/ scripts/
+	uv run ruff check src/ scripts/ tests/
 
 clean:
 	find src scripts -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
