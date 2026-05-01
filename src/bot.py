@@ -415,6 +415,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     data = query.data
     user_id = update.effective_user.id
 
+    if data == "privacy_opt_in_details":
+        keyboard = [[InlineKeyboardButton("✅ Ich stimme zu", callback_data="privacy_opt_in")]]
+        await query.edit_message_text(
+            "🔒 *DSGVO Details*\n\nDie Verarbeitung deiner Daten ist notwendig, um die Features dieses Bots nutzen zu können.\nWeitere Details findest du unter /privacy.\n\nBist du einverstanden?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+        return
+
+    if data == "privacy_opt_in":
+        await db.set_consent_status(user_id, 1)
+        pending_msg = await db.get_and_clear_pending_message(user_id)
+        await query.edit_message_text("✅ Danke für deine Zustimmung! Ich verarbeite nun deine erste Anfrage...")
+        if pending_msg:
+            chat_id = update.effective_chat.id
+            user = update.effective_user
+            await _process_user_message(update, context, chat_id, user_id, user, pending_msg)
+        return
+
     if data == "setc_abort":
         await query.edit_message_text("✅ Vorgang beendet. Deine bisherigen Einstellungen (falls vorhanden) bleiben gespeichert.")
         return
@@ -655,6 +674,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("⛔ Du wurdest gesperrt.")
         return
 
+    has_consented = await db.get_consent_status(user_id)
+    if has_consented == 0:
+        await db.save_pending_message(user_id, text)
+        keyboard = [
+            [InlineKeyboardButton("✅ Ich stimme zu", callback_data="privacy_opt_in")],
+            [InlineKeyboardButton("📄 Details lesen", callback_data="privacy_opt_in_details")]
+        ]
+        await update.message.reply_text(
+            "🔒 *Datenschutz & DSGVO*\n\nUm deine Anfragen zu beantworten, verarbeite ich deine Eingaben (Profil, Historie) und sende sie an Dritte (KI APIs). Bitte stimme der Datenverarbeitung zu.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+        return
+
+    await _process_user_message(update, context, chat_id, user_id, user, text)
+
+async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int, user, text: str) -> None:
     if _maintenance[0] and not admin._is_admin(user_id):
         await update.message.reply_text(_maintenance[1])
         return
