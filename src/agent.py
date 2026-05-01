@@ -22,7 +22,7 @@ from typing import Optional
 import litellm
 from src.config import settings
 from src.tools import TOOL_HANDLERS
-from src import formatter
+from src import formatter, privacy
 
 log = logging.getLogger(__name__)
 litellm.drop_params = True
@@ -223,36 +223,21 @@ def set_provider(provider: str) -> bool:
 def current_provider() -> str:
     return _provider_override or settings.llm_provider
 
-def redact_pii(text: str) -> str:
-    """Best-effort Redaktion von sensiblen Daten (Emails, Telefonnummern, IBANs)."""
-    if not text: return text
-    # 1. IBAN (zuerst, da sie Zahlen enthält die als Telefonnummer missverstanden werden könnten)
-    # Deckt gängige EU-IBANs ab (Ländercode + Prüfziffer + bis zu 30 Stellen)
-    text = re.sub(r'\b[A-Z]{2}\d{2}[ \d]{12,30}\b', '[IBAN]', text)
-    
-    # 2. Email
-    text = re.sub(r'\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+\b', '[EMAIL]', text)
-    
-    # 3. Telefon (mind. 7 Ziffern, um nicht versehentlich Jahreszahlen oder IDs zu treffen)
-    # Erkennt Formate wie +49 123..., 0123-456..., 0721 1234567
-    text = re.sub(r'(\+?\d[\d\s-]{5,}\d)', lambda m: '[PHONE]' if sum(c.isdigit() for c in m.group(0)) >= 7 else m.group(0), text)
-    
-    return text
-
 MAX_HISTORY_EXCHANGES = 3
+
 MAX_TOOL_CALLS = 6
 
 async def run(user_message: str, history: list[dict], user_id: int | None = None, user_label: str = "", primary_course: str | None = None, intent: str = "smalltalk_fallback") -> tuple[str, int, int, list]:
     # 1. Privacy Settings laden
     from src import db
-    privacy = {"allow_history": 1, "allow_llm": 1}
+    privacy_settings = {"allow_history": 1, "allow_llm": 1}
     if user_id:
-        privacy = await db.get_privacy_settings(user_id)
+        privacy_settings = await db.get_privacy_settings(user_id)
 
     # Redaktion auf User-Input
-    safe_message = redact_pii(user_message)
+    safe_message = privacy.redact_pii(user_message)
 
-    if not privacy.get("allow_llm", True):
+    if not privacy_settings.get("allow_llm", True):
         return "❌ <b>KI-Verarbeitung deaktiviert.</b>\n\nDu hast die KI-Verarbeitung in deinen /consent Einstellungen deaktiviert. Bitte aktiviere sie, um natürliche Anfragen zu stellen.", 0, 0, []
 
     # Nutzer-Profil laden (immer aktuell aus DB, um History-Verwirrung zu vermeiden)
@@ -267,14 +252,14 @@ async def run(user_message: str, history: list[dict], user_id: int | None = None
                 primary_course = u.get("primary_course")
 
     # Historie filtern & redigieren (falls erlaubt)
-    if privacy.get("allow_history", True):
+    if privacy_settings.get("allow_history", True):
         filtered_history = filter_history_by_intent(history, intent)
     else:
         filtered_history = []
 
     processed_history = []
     for msg in filtered_history:
-        content = redact_pii(msg.get("content", ""))
+        content = privacy.redact_pii(msg.get("content", ""))
         if len(content) > 1000: content = content[:1000] + "... [gekürzt]"
         processed_history.append({"role": msg["role"], "content": content})
 
@@ -371,7 +356,7 @@ async def run(user_message: str, history: list[dict], user_id: int | None = None
 
     reply = formatter.format_results(collected_results, safe_message)
     
-    if privacy.get("allow_history", True):
+    if privacy_settings.get("allow_history", True):
         history.append({"role": "user", "content": safe_message})
         history.append({"role": "assistant", "content": reply})
         max_entries = MAX_HISTORY_EXCHANGES * 2

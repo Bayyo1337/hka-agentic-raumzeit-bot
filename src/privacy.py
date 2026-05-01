@@ -117,7 +117,8 @@ async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Dein Profil & gespeicherte Kurse\n"
         "• Deinen gesamten Chat-Verlauf\n"
         "• Alle Token-Statistiken\n"
-        "• Deine Einstellungen\n\n"
+        "• Deine Einstellungen\n"
+        "• Fehlerberichte & Feedback\n\n"
         "Dein Bot-Zugang wird damit effektiv zurückgesetzt.",
         reply_markup=reply_markup,
         parse_mode="HTML"
@@ -248,11 +249,9 @@ def redact_pii(text: str) -> str:
     # Verhindert das Capturen von Satzzeichen am Ende der TLD
     text = re.sub(r'\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-]*[a-zA-Z0-9]\b', '[EMAIL]', text)
 
-    # 3. Telefon (mind. 7 Ziffern)
-    # Erkennt Formate wie +49 123..., 0123-456..., 0721 1234567
-    # Nutzt Wortgrenzen und stellt sicher, dass es sich um eine Nummer handelt
-    text = re.sub(r'\b(\+?\d[\d\s-]{5,}\d)\b', 
-                  lambda m: '[PHONE]' if sum(c.isdigit() for c in m.group(0)) >= 7 else m.group(0), 
+    # 3. Telefon (mind. 7 Ziffern, muss mit 0 oder + beginnen oder ein Trennzeichen enthalten)
+    text = re.sub(r'(?<!\w)(\+?\d[\d\s-]{5,}\d)\b', 
+                  lambda m: '[PHONE]' if sum(c.isdigit() for c in m.group(0)) >= 7 and (m.group(0).startswith(('0', '+')) or ' ' in m.group(0) or '-' in m.group(0)) else m.group(0), 
                   text)
 
     return text

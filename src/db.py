@@ -345,7 +345,10 @@ async def save_feedback_json(data: dict) -> str:
     """Speichert strukturiertes Feedback als JSON."""
     os.makedirs("data/feedback", exist_ok=True)
     user_id = data.get("user_id", 0)
-    fb_type = data.get("type", "feedback")
+    # Sanitize type: only alphanumeric
+    raw_type = str(data.get("type", "feedback"))
+    fb_type = "".join(c for c in raw_type if c.isalnum()) or "feedback"
+    
     now = datetime.now()
 
     # German format for internal JSON
@@ -487,12 +490,14 @@ async def export_user_data(user_id: int) -> dict:
     data["feedback_files"] = []
     if os.path.isdir(feedback_dir):
         for f in os.listdir(feedback_dir):
-            if f.endswith(".json") and f"_{user_id}_" in f:
-                try:
-                    with open(os.path.join(feedback_dir, f), "r", encoding="utf-8") as j:
-                        data["feedback_files"].append({"filename": f, "content": json.load(j)})
-                except Exception as e:
-                    log.error("Failed to export feedback file %s: %s", f, e)
+            if f.endswith(".json"):
+                parts = f.replace(".json", "").split("_")
+                if len(parts) >= 3 and parts[2] == str(user_id):
+                    try:
+                        with open(os.path.join(feedback_dir, f), "r", encoding="utf-8") as j:
+                            data["feedback_files"].append({"filename": f, "content": json.load(j)})
+                    except Exception as e:
+                        log.error("Failed to export feedback file %s: %s", f, e)
     
     return data
 
@@ -521,11 +526,13 @@ async def delete_user_data(user_id: int) -> bool:
     feedback_dir = "data/feedback"
     if os.path.isdir(feedback_dir):
         for f in os.listdir(feedback_dir):
-            if f.endswith(".json") and f"_{user_id}_" in f:
-                try:
-                    os.remove(os.path.join(feedback_dir, f))
-                except Exception as e:
-                    log.error("Failed to delete feedback file %s: %s", f, e)
+            if f.endswith(".json"):
+                parts = f.replace(".json", "").split("_")
+                if len(parts) >= 3 and parts[2] == str(user_id):
+                    try:
+                        os.remove(os.path.join(feedback_dir, f))
+                    except Exception as e:
+                        log.error("Failed to delete feedback file %s: %s", f, e)
     
     return True
 
@@ -536,12 +543,9 @@ async def run_gdpr_cleanup() -> dict:
     now = datetime.now()
     
     # Defaults
-    D_HIST = 168
-    D_TELEM = 24
-    D_PLAN = 4
-    D_FEED = 30
+    D_HIST, D_TELEM, D_PLAN, D_FEED = 168, 24, 4, 30
 
-    # 1. Alle Custom-Settings abrufen
+    # 1. Custom-Settings abrufen & gruppieren
     async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute(
             "SELECT user_id, history_ttl_hours, telemetry_ttl_hours, "
@@ -549,63 +553,90 @@ async def run_gdpr_cleanup() -> dict:
         ) as cur:
             settings_rows = await cur.fetchall()
     
-    custom_uids = [r[0] for r in settings_rows]
+    h_groups, t_groups, p_groups, ttl_map = {}, {}, {}, {}
+    custom_uids = []
+    for uid, h_ttl, t_ttl, p_ttl, f_ttl in settings_rows:
+        h_groups.setdefault(h_ttl, []).append(uid)
+        t_groups.setdefault(t_ttl, []).append(uid)
+        p_groups.setdefault(p_ttl, []).append(uid)
+        ttl_map[uid] = f_ttl
+        custom_uids.append(uid)
 
     # 2. Histories (STATE_DB)
     async with aiosqlite.connect(STATE_DB) as db:
-        for uid, h_ttl, t_ttl, p_ttl, f_ttl in settings_rows:
-            cutoff = (now - timedelta(hours=h_ttl)).isoformat()
-            res = await db.execute("DELETE FROM histories WHERE chat_id=? AND updated_at < ?", (uid, cutoff))
-            stats["histories"] += res.rowcount
+        # Custom TTLs
+        for ttl, uids in h_groups.items():
+            cutoff = (now - timedelta(hours=ttl)).isoformat()
+            for i in range(0, len(uids), 900):
+                chunk = uids[i:i+900]
+                placeholders = ",".join(["?"] * len(chunk))
+                cur = await db.execute(f"DELETE FROM histories WHERE chat_id IN ({placeholders}) AND updated_at < ?", chunk + [cutoff])
+                stats["histories"] += cur.rowcount
         
+        # Default TTLs (those not in custom_uids)
         cutoff_def = (now - timedelta(hours=D_HIST)).isoformat()
         if custom_uids:
-            placeholders = ",".join(["?"] * len(custom_uids))
-            query = f"DELETE FROM histories WHERE updated_at < ? AND chat_id NOT IN ({placeholders})"
-            res = await db.execute(query, [cutoff_def] + custom_uids)
+            for i in range(0, len(custom_uids), 900):
+                chunk = custom_uids[i:i+900]
+                placeholders = ",".join(["?"] * len(chunk))
+                cur = await db.execute(f"DELETE FROM histories WHERE updated_at < ? AND chat_id NOT IN ({placeholders})", [cutoff_def] + chunk)
+                stats["histories"] += cur.rowcount
         else:
-            res = await db.execute("DELETE FROM histories WHERE updated_at < ?", (cutoff_def,))
-        stats["histories"] += res.rowcount
+            cur = await db.execute("DELETE FROM histories WHERE updated_at < ?", (cutoff_def,))
+            stats["histories"] += cur.rowcount
         await db.commit()
 
     # 3. Telemetry (TELEMETRY_DB)
     async with aiosqlite.connect(TELEMETRY_DB) as db:
-        for uid, h_ttl, t_ttl, p_ttl, f_ttl in settings_rows:
-            cutoff = (now - timedelta(hours=t_ttl)).isoformat()
-            res = await db.execute("DELETE FROM requests WHERE user_id=? AND ts < ?", (uid, cutoff))
-            stats["telemetry"] += res.rowcount
+        # Custom TTLs
+        for ttl, uids in t_groups.items():
+            cutoff = (now - timedelta(hours=ttl)).isoformat()
+            for i in range(0, len(uids), 900):
+                chunk = uids[i:i+900]
+                placeholders = ",".join(["?"] * len(chunk))
+                cur = await db.execute(f"DELETE FROM requests WHERE user_id IN ({placeholders}) AND ts < ?", chunk + [cutoff])
+                stats["telemetry"] += cur.rowcount
         
+        # Default TTLs
         cutoff_def = (now - timedelta(hours=D_TELEM)).isoformat()
         if custom_uids:
-            placeholders = ",".join(["?"] * len(custom_uids))
-            query = f"DELETE FROM requests WHERE ts < ? AND user_id NOT IN ({placeholders})"
-            res = await db.execute(query, [cutoff_def] + custom_uids)
+            for i in range(0, len(custom_uids), 900):
+                chunk = custom_uids[i:i+900]
+                placeholders = ",".join(["?"] * len(chunk))
+                cur = await db.execute(f"DELETE FROM requests WHERE ts < ? AND user_id NOT IN ({placeholders})", [cutoff_def] + chunk)
+                stats["telemetry"] += cur.rowcount
         else:
-            res = await db.execute("DELETE FROM requests WHERE ts < ?", (cutoff_def,))
-        stats["telemetry"] += res.rowcount
+            cur = await db.execute("DELETE FROM requests WHERE ts < ?", (cutoff_def,))
+            stats["telemetry"] += cur.rowcount
         await db.commit()
 
     # 4. Plan Cache (CACHE_DB)
     async with aiosqlite.connect(CACHE_DB) as db:
-        for uid, h_ttl, t_ttl, p_ttl, f_ttl in settings_rows:
-            cutoff = (now - timedelta(hours=p_ttl)).isoformat()
-            res = await db.execute("DELETE FROM user_plan_cache WHERE user_id=? AND cached_at < ?", (uid, cutoff))
-            stats["plan_cache"] += res.rowcount
+        # Custom TTLs
+        for ttl, uids in p_groups.items():
+            cutoff = (now - timedelta(hours=ttl)).isoformat()
+            for i in range(0, len(uids), 900):
+                chunk = uids[i:i+900]
+                placeholders = ",".join(["?"] * len(chunk))
+                cur = await db.execute(f"DELETE FROM user_plan_cache WHERE user_id IN ({placeholders}) AND cached_at < ?", chunk + [cutoff])
+                stats["plan_cache"] += cur.rowcount
         
+        # Default TTLs
         cutoff_def = (now - timedelta(hours=D_PLAN)).isoformat()
         if custom_uids:
-            placeholders = ",".join(["?"] * len(custom_uids))
-            query = f"DELETE FROM user_plan_cache WHERE cached_at < ? AND user_id NOT IN ({placeholders})"
-            res = await db.execute(query, [cutoff_def] + custom_uids)
+            for i in range(0, len(custom_uids), 900):
+                chunk = custom_uids[i:i+900]
+                placeholders = ",".join(["?"] * len(chunk))
+                cur = await db.execute(f"DELETE FROM user_plan_cache WHERE cached_at < ? AND user_id NOT IN ({placeholders})", [cutoff_def] + chunk)
+                stats["plan_cache"] += cur.rowcount
         else:
-            res = await db.execute("DELETE FROM user_plan_cache WHERE cached_at < ?", (cutoff_def,))
-        stats["plan_cache"] += res.rowcount
+            cur = await db.execute("DELETE FROM user_plan_cache WHERE cached_at < ?", (cutoff_def,))
+            stats["plan_cache"] += cur.rowcount
         await db.commit()
 
     # 5. Feedback Files
     feedback_dir = "data/feedback"
     if os.path.isdir(feedback_dir):
-        ttl_map = {uid: f_ttl for uid, h_ttl, t_ttl, p_ttl, f_ttl in settings_rows}
         for f in os.listdir(feedback_dir):
             if f.endswith(".json"):
                 fpath = os.path.join(feedback_dir, f)
@@ -615,7 +646,7 @@ async def run_gdpr_cleanup() -> dict:
                     try:
                         uid = int(parts[2])
                         days = ttl_map.get(uid, D_FEED)
-                    except ValueError: pass
+                    except (ValueError, TypeError): pass
                 
                 mtime = datetime.fromtimestamp(os.path.getmtime(fpath))
                 if (now - mtime).days > days:

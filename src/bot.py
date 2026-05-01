@@ -926,9 +926,9 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
 
         # Privacy Check & Redaktion
         report_uid = uid
+        user_input = privacy.redact_pii(user_input)
         if uid > 0:
             privacy_settings = await db.get_privacy_settings(uid)
-            user_input = agent.redact_pii(user_input)
             if not privacy_settings.get("allow_error_reports", False):
                 report_uid = 0
                 user_input = "[REDACTED]"

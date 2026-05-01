@@ -450,88 +450,49 @@ async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     asyncio.create_task(_bg_sync())
 
-def save_issue_from_log(data: dict) -> str:
+def _extract_user_id(val: str | int | None) -> int:
+    """Extrahiert eine User-ID aus einem String (z.B. '@username (123456)' oder '123456')."""
+    if val is None:
+        return 0
+    if isinstance(val, int):
+        return val
+    s = str(val).strip()
+    if s.isdigit():
+        return int(s)
+    # Suche nach (123456)
+    match = re.search(r'\((\d+)\)', s)
+    if match:
+        return int(match.group(1))
+    # Letzter Versuch: Alle Ziffern am Ende? (unwahrscheinlich aber sicher ist sicher)
+    match = re.search(r'(\d+)$', s)
+    if match:
+        return int(match.group(1))
+    return 0
+
+
+async def save_issue_from_log(data: dict) -> str:
     """
-    Speichert einen Fehler-Log als Markdown-Issue in issues/active/.
+    Speichert einen Fehler-Log als strukturiertes JSON in data/feedback/.
     Gibt den Dateinamen zurück.
     """
-    now = datetime.now()
-    error_msg = data.get("error", "Unknown Error")
-    user_input = data.get("user_input", "N/A")
-    traceback = data.get("traceback", "No traceback available")
-    user_info = data.get("user_info", "Unknown User")
+    data["type"] = "error"
+    # Robustere Extraktion
+    if "user_id" not in data or not data["user_id"]:
+        data["user_id"] = _extract_user_id(data.get("user_info"))
 
-    # Prägnanter Dateiname (inkl. Fehler-Typ falls möglich)
-    error_type = "error"
-    if ":" in error_msg:
-        potential_type = error_msg.split(":")[0].strip()
-        if " " not in potential_type: # Wahrscheinlich ein Python-Error-Typ
-            error_type = potential_type.lower()
-
-    clean_msg = re.sub(r'[^a-z0-9]', '-', error_msg.lower())
-    clean_msg = re.sub(r'-+', '-', clean_msg).strip("-")
-    filename = f"{error_type}-{clean_msg[:30]}-{now.strftime('%y%m%d-%H%M%S')}.md"
-    
-    path = os.path.join("issues", "active", filename)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    
-    content = f"""# Issue: {error_msg}
-
-## Status
-- **Erstellt:** {now.strftime('%d.%m.%Y %H:%M:%S')}
-- **User:** {user_info}
-
-## Fehlerbeschreibung
-{error_msg}
-
-## Usereingabe
-```
-{user_input}
-```
-
-## Traceback
-```python
-{traceback}
-```
-
-## Kontext & Logs
-(Automatisch generiert aus Telegram Error Handler)
-"""
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
-        
-    return filename
+    return await db.save_feedback_json(data)
 
 
-def save_user_issue(title: str, context_cmd: str, comment: str, user_info: str) -> str:
-    """Speichert ein vom Nutzer gemeldetes Feedback als MD-Issue."""
-    import re
-    from datetime import datetime
-    import os
-    now = datetime.now()
-    clean_title = re.sub(r'[^a-z0-9]', '-', title.lower())
-    clean_title = re.sub(r'-+', '-', clean_title).strip("-")
-    filename = f"user-{clean_title[:30]}-{now.strftime('%y%m%d-%H%M%S')}.md"
-    
-    path = os.path.join("issues", "active", filename)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    
-    content = f"""# User Issue: {title}
+async def save_user_issue(title: str, context_cmd: str, comment: str, user_info: str) -> str:
+    """Speichert ein vom Nutzer gemeldetes Feedback als JSON in data/feedback/."""
+    user_id = _extract_user_id(user_info)
 
-## Status
-- **Erstellt:** {now.strftime('%d.%m.%Y %H:%M:%S')}
-- **User:** {user_info}
-
-## Beschreibung
-{comment}
-
-## Kontext (Letzter Befehl)
-> {context_cmd}
-
----
-*Erstellt via /bug Kommando.*
-"""
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
-        
-    return filename
+    data = {
+        "type": "bug",
+        "title": title,
+        "context_cmd": context_cmd,
+        "comment": comment,
+        "user_info": user_info,
+        "user_id": user_id
+    }
+    return await db.save_feedback_json(data)
