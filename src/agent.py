@@ -121,6 +121,27 @@ def resolve_german_weekday(text: str, ref_date: date) -> date | None:
     return None
 
 
+def filter_history_by_intent(history: list[dict], intent: str) -> list[dict]:
+    timetable_keywords = ["raum", "kurs", "dozent", "stundenplan", "plan", "m-102", "thermodynamik", "vorlesung"]
+    mensa_keywords = ["mensa", "speiseplan", "essen", "hunger", "allergene", "gericht", "schnitzel", "wahlessen"]
+    
+    filtered = []
+    if intent in ["mensa_menu", "mensa_details"]:
+        for msg in history:
+            content_lower = msg["content"].lower()
+            if not any(kw in content_lower for kw in timetable_keywords):
+                filtered.append(msg)
+    elif intent in ["course_timetable", "room_timetable", "lecturer_timetable", "next_occurrence"]:
+        for msg in history:
+            content_lower = msg["content"].lower()
+            if not any(kw in content_lower for kw in mensa_keywords):
+                filtered.append(msg)
+    else:
+        filtered = history
+        
+    return filtered
+
+
 def _extraction_prompt(primary_course: Optional[str] = None, intent: str = "smalltalk_fallback") -> str:
     config = INTENT_CONFIGS.get(intent, INTENT_CONFIGS["smalltalk_fallback"])
     instruction = config["instruction"]
@@ -161,6 +182,14 @@ Kürzel-Beispiele: MABB=Maschinenbau, INFB=Informatik, IWIB=Wirtschaftsinformati
 
 Ausgabeformat:
 {"calls": [{"tool": "TOOLNAME", "args": {"param": "wert"}}, ...]}""")
+
+    # 5. Aktuelle Wochentage zur Orientierung
+    today = date.today()
+    days_info = []
+    for i in range(7):
+        d = today + timedelta(days=i)
+        days_info.append(f"{d.strftime('%A')}: {d.isoformat()}")
+    sections.append("\nAktuelle Wochentage:\n" + "\n".join(days_info))
 
     prompt = "\n".join(sections)
     profile_info = f"\nNutzer-Profil: Der Nutzer studiert '{primary_course}'." if primary_course else "\nNutzer-Profil: Kein Kurs hinterlegt."
@@ -210,8 +239,9 @@ async def run(user_message: str, history: list[dict], user_id: int | None = None
             else:
                 primary_course = u.get("primary_course")
 
+    filtered_history = filter_history_by_intent(history, intent)
     processed_history = []
-    for msg in history:
+    for msg in filtered_history:
         content = msg.get("content", "")
         if len(content) > 1000: content = content[:1000] + "... [gekürzt]"
         processed_history.append({"role": msg["role"], "content": content})
@@ -277,6 +307,15 @@ async def run(user_message: str, history: list[dict], user_id: int | None = None
         history.append({"role": "user", "content": user_message})
         history.append({"role": "assistant", "content": reply})
         return reply, total_input_tokens, total_output_tokens, []
+
+    # Deterministic Weekday Override
+    for call in calls:
+        if call.get("tool") in ["get_mensa_menu", "get_mensa_meal_details"]:
+            resolved_date = resolve_german_weekday(user_message, date.today())
+            if resolved_date:
+                if "args" not in call: call["args"] = {}
+                call["args"]["date"] = resolved_date.isoformat()
+                log.debug("Override date to %s due to weekday in message", resolved_date.isoformat())
 
     async def _execute(call: dict) -> tuple[str, dict]:
         name = call.get("tool", "")
