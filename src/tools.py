@@ -1059,9 +1059,11 @@ async def _get_canteen_id(query: str | None = None) -> str:
 async def get_mensa_menu(canteen: str | None = None, date: str | None = None) -> dict:
     """Holt den Speiseplan einer Mensa via api.mensa-ka.de (GraphQL)."""
     global _MEALS_CACHE, _MEALS_BY_NAME_CACHE
+    start_t = time.monotonic()
     if not date:
         date = _date.today().isoformat()
     
+    log.info("Mensa-API: Rufe Speiseplan ab (canteen=%s, date=%s)", canteen, date)
     async with _MENSA_LOCK:
         canteen_id = await _get_canteen_id(canteen)
         
@@ -1096,6 +1098,8 @@ async def get_mensa_menu(canteen: str | None = None, date: str | None = None) ->
                 
                 canteen_data = (data.get("data") or {}).get("getCanteen")
                 if not canteen_data:
+                    elapsed = time.monotonic() - start_t
+                    log.info("Mensa-API: Mensa geschlossen oder keine Daten (%.2fs)", elapsed)
                     return {"canteen": "Mensa", "date": date, "closed": True, "meals": []}
                 
                 c_name = canteen_data.get("name", "Mensa")
@@ -1133,9 +1137,12 @@ async def get_mensa_menu(canteen: str | None = None, date: str | None = None) ->
                         # Zusätzlich nach normiertem Namen cachen für LLM-Robustheit
                         _MEALS_BY_NAME_CACHE[_norm(m["name"])] = m_id
                 
+                elapsed = time.monotonic() - start_t
                 if not flattened_meals:
-                     return {"canteen": c_name, "date": date, "closed": True, "meals": []}
+                    log.info("Mensa-API: Keine Gerichte gefunden für %s (%.2fs)", c_name, elapsed)
+                    return {"canteen": c_name, "date": date, "closed": True, "meals": []}
                 
+                log.info("Mensa-API: Speiseplan erhalten in %.2fs (%d Gerichte)", elapsed, len(flattened_meals))
                 # Persistenz
                 try:
                     await db.save_mensa_meals(flattened_meals)
@@ -1155,19 +1162,28 @@ async def _fetch_canteens_raw():
 
 async def get_mensa_meal_details(meal_id: str, is_retry: bool = False) -> dict:
     """Holt Allergene und Zusatzstoffe für ein spezifisches Gericht."""
+    start_t = time.monotonic()
+    log.info("Mensa-Detail: Suche Infos für '%s' (is_retry=%s)", meal_id, is_retry)
+    
     # 1. Schneller RAM-Check (ohne Lock)
     if meal_id in _MEALS_CACHE:
+        elapsed = time.monotonic() - start_t
+        log.info("Mensa-Detail: RAM-Cache Treffer für '%s' (%.4fs)", meal_id, elapsed)
         return _MEALS_CACHE[meal_id]
         
     async with _MENSA_LOCK:
         # 2. Aus RAM-Cache versuchen (nach Lock, falls gerade befüllt wurde)
         if meal_id in _MEALS_CACHE:
+            elapsed = time.monotonic() - start_t
+            log.info("Mensa-Detail: RAM-Cache Treffer (nach Lock) für '%s' (%.4fs)", meal_id, elapsed)
             return _MEALS_CACHE[meal_id]
 
         # 3. Aus Datenbank versuchen (UUID Match)
         try:
             if (db_meal := await db.get_mensa_meal_by_id(meal_id)):
                 _MEALS_CACHE[meal_id] = db_meal # In RAM-Cache für nächsten Zugriff
+                elapsed = time.monotonic() - start_t
+                log.info("Mensa-Detail: DB Treffer für '%s' (%.4fs)", meal_id, elapsed)
                 return db_meal
         except Exception as e:
             log.warning("Mensa-DB: Fehler bei ID-Lookup: %s", e)
@@ -1220,7 +1236,8 @@ async def get_mensa_meal_details(meal_id: str, is_retry: bool = False) -> dict:
                         all_allergens.update(m.get("allergens", []))
                         all_additives.update(m.get("additives", []))
                     
-                    log.info("Mensa-Detail: Line-Match für '%s' -> %d Gerichte", meal_id, len(line_meals))
+                    elapsed = time.monotonic() - start_t
+                    log.info("Mensa-Detail: Line-Match für '%s' -> %d Gerichte (%.2fs)", meal_id, len(line_meals), elapsed)
                     return {
                         "id": f"line_{q_norm_radical}",
                         "name": f"Alle Gerichte der Linie ({', '.join(meal_names)})",
@@ -1236,7 +1253,8 @@ async def get_mensa_meal_details(meal_id: str, is_retry: bool = False) -> dict:
                     cat_meals = [m for m in today_meals if cat_query in _norm_radical(m.get("line", {}).get("name", ""))]
                     if 0 <= idx < len(cat_meals):
                         target = cat_meals[idx]
-                        log.info("Mensa-Detail: Pattern-Match für '%s' -> '%s' (ID: %s)", meal_id, target["name"], target["id"])
+                        elapsed = time.monotonic() - start_t
+                        log.info("Mensa-Detail: Pattern-Match für '%s' -> '%s' (ID: %s, %.2fs)", meal_id, target["name"], target["id"], elapsed)
                         return target
         except Exception as e:
             log.warning("Mensa-DB: Fehler bei Pattern-Lookup: %s", e)
@@ -1246,6 +1264,7 @@ async def get_mensa_meal_details(meal_id: str, is_retry: bool = False) -> dict:
         import difflib
         q_norm = _norm(meal_id)
         if q_norm in _MEALS_BY_NAME_CACHE:
+            log.info("Mensa-Detail: RAM-Namenscache Treffer für '%s'", meal_id)
             return await get_mensa_meal_details(_MEALS_BY_NAME_CACHE[q_norm])
         
         # Dann Fuzzy Match über alle bekannten Namen aus der DB
@@ -1257,19 +1276,23 @@ async def get_mensa_meal_details(meal_id: str, is_retry: bool = False) -> dict:
             # A. Erst exakter Teilstring-Match (beliebt bei Nutzern)
             for norm_name, mid in norm_to_id.items():
                 if q_norm in norm_name:
-                    log.info("Mensa-Detail: DB-Substring-Match für '%s' -> '%s' (ID: %s)", meal_id, norm_name, mid)
+                    elapsed = time.monotonic() - start_t
+                    log.info("Mensa-Detail: DB-Substring-Match für '%s' -> '%s' (ID: %s, %.2fs)", meal_id, norm_name, mid, elapsed)
                     return await get_mensa_meal_details(mid)
             
             # B. Dann Fuzzy Match (bei Tippfehlern)
             matches = difflib.get_close_matches(q_norm, norm_to_id.keys(), n=1, cutoff=0.4)
             if matches:
                 target_id = norm_to_id[matches[0]]
-                log.info("Mensa-Detail: DB-Fuzzy-Match für '%s' -> '%s' (ID: %s)", meal_id, matches[0], target_id)
+                elapsed = time.monotonic() - start_t
+                log.info("Mensa-Detail: DB-Fuzzy-Match für '%s' -> '%s' (ID: %s, %.2fs)", meal_id, matches[0], target_id, elapsed)
                 return await get_mensa_meal_details(target_id)
         except Exception as e:
             log.warning("Mensa-DB: Fehler bei Fuzzy-Lookup: %s", e)
 
         # 7. Finaler Fehlerfall
+        elapsed = time.monotonic() - start_t
+        log.error("Mensa-Detail: Keine Informationen gefunden für '%s' (%.2fs)", meal_id, elapsed)
         return {"error": "Gerichts-Details aktuell nicht verfügbar. Bitte frage erst nach dem Mensa-Menü."}
 
 
