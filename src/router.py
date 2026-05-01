@@ -60,8 +60,9 @@ class Router:
                 )
         return None
 
-    async def _llm_fallback(self, text: str) -> RouterOutput:
+    async def _llm_fallback(self, text: str, primary_course: str | None = None) -> RouterOutput:
         """Stufe 2: LLM-basierte Klassifikation (Fallback)."""
+        profile_info = f"\nNutzer-Profil: {primary_course}" if primary_course else "\nNutzer-Profil: Kein Kurs hinterlegt."
         prompt = f"""
 Du bist ein präziser Intent-Router für das Raumzeit-Buchungssystem der Hochschule Karlsruhe. 
 Analysiere die Nachricht und ordne sie einem Intent zu.
@@ -81,6 +82,10 @@ Verfügbare Intents:
 Gib nur ein JSON-Objekt im angegebenen Schema zurück.
 
 Nachricht: "{text}"
+{profile_info}
+
+Regel: Wenn der Nutzer nach SEINEM Plan fragt (ich, mein, heute, morgen, wann habe ich) und ein Kurs im Profil steht, nutze IMMER agent_flow.
+Frage nur nach Klärung (ask_clarification), wenn der Intent klar ist, aber KEIN Kurs im Text UND das Profil leer ist.
 """
         # Wir nutzen ein kleines, schnelles Modell für das Routing (z.B. GPT-4o-mini oder gemini-1.5-flash)
         # Hier als Fallback verwenden wir das vom User konfigurierte Modell. Da der Router aber unabhängig vom Hauptagenten
@@ -140,7 +145,8 @@ Nachricht: "{text}"
             return result
 
         # 2. LLM Fallback
-        log.debug("Router LLM-Fallback für: %.50s...", text)
-        return await self._llm_fallback(text)
+        primary_course = user_context.get("primary_course")
+        log.debug("Router LLM-Fallback für: %.50s... (Profile: %s)", text, primary_course)
+        return await self._llm_fallback(text, primary_course=primary_course)
 
 router_instance = Router()

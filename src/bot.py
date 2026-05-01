@@ -675,7 +675,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if settings.router_enabled:
             try:
                 from src.router import router_instance
-                router_result = await router_instance.classify_message(text, {"user_id": user_id, "chat_id": chat_id}, u or {})
+                router_result = await router_instance.classify_message(
+                    text, 
+                    {"user_id": user_id, "chat_id": chat_id, "primary_course": primary_course}, 
+                    u or {}
+                )
                 log.info("Router Result: Intent=%s, Confidence=%.2f, Strategy=%s",
                          router_result.intent, router_result.confidence, router_result.strategy.action)
 
