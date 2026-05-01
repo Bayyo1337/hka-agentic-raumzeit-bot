@@ -5,6 +5,7 @@ Implementiert Nutzer-Steuerung über Datenexport, Löschung und Privacy-Einstell
 
 import json
 import logging
+import re
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler
@@ -27,7 +28,7 @@ Deine Daten gehören dir. Hier ist eine Übersicht, was dieser Bot speichert und
 • <b>Tokens:</b> Zähler der verbrauchten KI-Einheiten.
 
 <b>2. Wo liegen die Daten?</b>
-• Alle Daten liegen in verschlüsselten SQLite-Datenbanken auf einem privaten Server in Deutschland.
+• Alle Daten liegen in geschützten SQLite-Datenbanken auf einem privaten Server. Der Zugriff ist auf die Bot-Instanz beschränkt.
 • Es findet <u>kein</u> Tracking durch Drittanbieter statt (außer Telegram selbst).
 
 <b>3. Drittanbieter</b>
@@ -71,6 +72,7 @@ async def cmd_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Verlauf-Speicherung: {"✅ An" if settings['allow_history'] else "❌ Aus"}
 • KI-Verarbeitung: {"✅ An" if settings['allow_llm'] else "❌ Aus"}
 • Telemetrie: {"✅ An" if settings['allow_telemetry'] else "❌ Aus"}
+• Fehlerberichte: {"✅ An" if settings.get('allow_error_reports') else "❌ Aus"}
 
 <b>🕒 Aufbewahrung (TTL):</b>
 • Verlauf: {settings['history_ttl_hours']}h
@@ -161,6 +163,7 @@ async def show_consent_menu(target, user_id, is_new=False):
         [InlineKeyboardButton(f"Verlauf speichern: {'✅' if settings['allow_history'] else '❌'}", callback_data="privacy_toggle_allow_history")],
         [InlineKeyboardButton(f"KI-Verarbeitung: {'✅' if settings['allow_llm'] else '❌'}", callback_data="privacy_toggle_allow_llm")],
         [InlineKeyboardButton(f"Telemetrie: {'✅' if settings['allow_telemetry'] else '❌'}", callback_data="privacy_toggle_allow_telemetry")],
+        [InlineKeyboardButton(f"Fehlerberichte: {'✅' if settings.get('allow_error_reports') else '❌'}", callback_data="privacy_toggle_allow_error_reports")],
         [InlineKeyboardButton("Fertig", callback_data="privacy_delete_cancel")] # Reuse cancel to just close/done
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -228,3 +231,28 @@ def register_handlers(app):
     # Callbacks
     app.add_handler(CallbackQueryHandler(handle_privacy_callbacks, pattern="^privacy_(delete|toggle)_"))
     app.add_handler(CallbackQueryHandler(handle_retention_presets, pattern="^privacy_preset_"))
+
+def redact_pii(text: str) -> str:
+    """
+    Best-effort Redaktion von sensiblen Daten (Emails, Telefonnummern, IBANs).
+    Wird vor der KI-Verarbeitung und in Fehlerberichten angewendet.
+    """
+    if not text:
+        return text
+
+    # 1. IBAN (Ländercode + Prüfziffer + bis zu 30 Stellen)
+    # Wortgrenzen verhindern das Treffen von Teil-Strings
+    text = re.sub(r'\b[A-Z]{2}\d{2}[ \d]{12,30}\b', '[IBAN]', text)
+
+    # 2. Email
+    # Verhindert das Capturen von Satzzeichen am Ende der TLD
+    text = re.sub(r'\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-]*[a-zA-Z0-9]\b', '[EMAIL]', text)
+
+    # 3. Telefon (mind. 7 Ziffern)
+    # Erkennt Formate wie +49 123..., 0123-456..., 0721 1234567
+    # Nutzt Wortgrenzen und stellt sicher, dass es sich um eine Nummer handelt
+    text = re.sub(r'\b(\+?\d[\d\s-]{5,}\d)\b', 
+                  lambda m: '[PHONE]' if sum(c.isdigit() for c in m.group(0)) >= 7 else m.group(0), 
+                  text)
+
+    return text

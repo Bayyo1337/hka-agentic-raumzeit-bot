@@ -18,13 +18,13 @@ Wir speichern nur Daten, die technisch notwendig sind, um dir die Funktionen des
 | Gewählte Kurse | `state.db` | `/myplan` Personalisierung | Bis zur Löschung |
 | Chat-Historie | `state.db` | KI-Kontext (Verständnis) | 7 Tage (einstellbar) |
 | Token-Verbrauch | `state.db` | Nutzungsstatistik | Bis zur Löschung |
-| Zeitstempel Anfragen | `telemetry.db`| Rate-Limiting / Missbrauchsschutz | 24 Stunden |
-| Feedback-Berichte | `data/feedback/`| Fehlerbehebung | 30 Tage |
+| Zeitstempel Anfragen | `telemetry.db`| Rate-Limiting / Missbrauchsschutz | 24 Stunden (einstellbar) |
+| Fehlerberichte (JSON) | `data/feedback/`| Fehlerbehebung | 30 Tage (einstellbar) |
 
 ## 3. Datenverarbeitung durch KI-Modelle
 Wenn du eine natürliche Frage stellst, senden wir den Text an einen KI-Provider (z.B. Mistral AI oder OpenAI).
 - **Redaktion:** Wir versuchen, E-Mails, Telefonnummern und IBANs automatisch zu entfernen, bevor sie gesendet werden.
-- **Transparenz:** Du kannst die KI-Verarbeitung jederzeit via `/consent` deaktivieren. Der Bot funktioniert dann nur noch eingeschränkt.
+- **Transparenz:** Du kannst die KI-Verarbeitung sowie die Erstellung von Fehlerberichten (`allow_error_reports`) jederzeit via `/consent` deaktivieren. Der Bot funktioniert dann nur noch eingeschränkt.
 
 ## 4. Deine Rechte (DSGVO)
 Der Bot bietet integrierte Werkzeuge, um deine Rechte wahrzunehmen:
