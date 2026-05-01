@@ -2,142 +2,150 @@
 
 Ein hochmoderner, autonomer KI-gestützter Telegram-Bot für Studierende der Hochschule Karlsruhe (HKA). Der Bot nutzt Large Language Models (LLMs) und ein spezialisiertes Multi-Agenten-System, um natürliche Sprache zu verstehen und präzise Informationen aus der Raumzeit-API, dem Mensa-Plan und den Personenverzeichnissen der HKA zu extrahieren.
 
-![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
-![Telegram](https://img.shields.io/badge/Telegram-Bot-blue)
-![License](https://img.shields.io/badge/License-AGPL--3.0-red)
-![Status](https://img.shields.io/badge/Status-Stabil-green)
+Der Bot kombiniert die Flexibilität von KI-Intents mit der Zuverlässigkeit deterministischer Tool-Ausführung – Fakten werden nie "halluziniert", sondern direkt aus den offiziellen Schnittstellen abgefragt.
 
 ---
 
-## ✨ Hauptfunktionen & Features
+## ✨ Hauptfunktionen
 
-### 🗣️ Intelligente Sprachverarbeitung (NLP)
-Vergiss kryptische Befehle. Durch ein hybrides **Intent-Routing** (Kombination aus schnellen Heuristiken und LLM-Präzision) versteht der Bot deine Fragen sofort:
-*   *"Wann ist Raum M-102 heute frei?"*
-*   *"Zeig mir den Stundenplan von Maschinenbau Semester 2."*
-*   *"Was unterrichtet Prof. Offermann am Donnerstag?"*
-*   *"Welche Vorlesungen habe ich morgen?"* (erfordert Profil-Setup)
-*   **Performance:** Häufige Anfragen (wie Konflikt-Analysen) werden über Fast-Path-Heuristiken blitzschnell ohne LLM-Verzögerung verarbeitet.
-
-### 🎓 Personalisierung & Multi-Semester (`/setcourse`)
-Der Bot merkt sich, was du studierst. Über einen interaktiven Assistenten kannst du:
-*   **Mehrere Semester gleichzeitig** speichern (ideal für Wiederholer oder Wahlpflichtfächer).
-*   Den Bot fragen: *"Was habe ich heute?"* – er filtert automatisch alle deine gespeicherten Kurse für den heutigen Tag.
-
-### 🍴 Moderne Mensa-Integration (GraphQL)
-Echtzeit-Abfrage der Speisepläne (Mensa Moltke und andere):
-*   **Präzise Daten:** Vollständige Integration der neuen `api.mensa-ka.de` GraphQL-Schnittstelle.
-*   **Details auf Klick:** Anzeige von Preisen (Student/Gast), Allergenen, Zusatzstoffen sowie veganer/vegetarischer Kennzeichnung.
-*   **Robustheit:** Intelligente ID-Verarbeitung verhindert Fehler bei halluzinierten Datums-Suffixen.
-
-### ⚠️ Stundenplan-Konflikt-Analyse
-Ein mächtiges Werkzeug für die Semesterplanung:
-*   **Befehl:** *"Finde Konflikte E-Technik im 2. Semester mit Vorlesungen aus dem 3. Semester"*
-*   **Intelligente Filter:** Der Bot erkennt automatisch, ob er nach Modulen filtern muss oder den gesamten Plan vergleicht.
-*   **Gruppen-Logik:** Exakte Prüfung aller Gruppen-Suffixe (z.B. MABB.2.A vs MABB.3.B).
-
-### 📍 Intelligente Campus-Karten
-Nie wieder den Raum suchen:
-*   Bei Fragen nach Gebäuden oder Räumen sendet der Bot ein **dynamisch generiertes Bild**.
-*   Das Zielgebäude wird exakt **rot markiert** (basierend auf dem offiziellen Lageplan).
-*   Inklusive automatischer **Stockwerks-Info**.
-
-### 🛡️ Stabilität & Sicherheit
-*   **Markdown Safety:** Globales Escaping aller API-Daten verhindert Telegram-Abstürze ("Can't find end of the entity").
-*   **Fehler-Resistenz:** Robuste Behandlung von Netzwerkfehlern und automatische Re-Builds veralteter Indizes.
+- 🏫 **Raumbelegung**: *"Wann ist Raum M-102 heute frei?"* oder *"Wo ist morgen um 10 Uhr etwas frei?"*
+- 📅 **Stundenpläne**: Abfrage für Studiengänge (z.B. MABB.2) oder Dozenten.
+- 🎓 **Personalisierung**: Speichere deine Kurse mit `/setcourse` und frage einfach: *"Was habe ich heute?"*
+- 🍴 **Mensa-Plan**: Aktuelle Menüs der Mensa Moltke via GraphQL inkl. Allergenen und Preisen.
+- 🗺️ **Campus-Karten**: Automatische Generierung von Lageplänen mit markierten Gebäuden und Stockwerks-Infos.
+- ⚔️ **Konflikt-Analyse**: *"Finde Überschneidungen zwischen MABB.2 und EIBB.2."*
+- 🛡️ **Admin-Suite**: Umfangreiche Tools zur Systemüberwachung, Nutzerverwaltung und Daten-Synchronisation.
 
 ---
 
-## 🤖 Agentic Workflow & Development
+## 🏗 Architektur
 
-Dieses Projekt wird von einem Team spezialisierter KI-Agenten (Skills) entwickelt. Diese arbeiten autonom nach dem Prinzip **Research -> Strategy -> Execution**:
+Der Bot folgt einer strikten Trennung zwischen Sprachverständnis und Datenverarbeitung:
 
-*   **`strategist`**: Der Projektleiter. Orchestriert die Kette von der Idee bis zum Git-Commit.
-*   **`issue-planner`**: Analysiert Probleme und erstellt detaillierte Architektur-Pläne.
-*   **`issue-fixer`**: Implementiert die Lösungen methodisch im Quellcode.
-*   **`feature-planner`**: Konzipiert neue Features und erstellt technische Spezifikationen.
-*   **`feature-implementer`**: Setzt Spezifikationen in sauberen, lauffähigen Code um.
-*   **`qa-reviewer`**: Unabhängige Qualitätskontrolle, führt Tests durch und verwaltet die Git-Historie.
+1.  **Router**: Analysiert die Nachricht mittels Heuristiken (Fast-Path) oder LLM-Klassifizierung.
+2.  **Agent**: Wandelt den erkannten Intent in strukturierte Tool-Calls (JSON) um.
+3.  **Tools**: Führen den deterministischen Python-Code aus (Scraping, DB-Abfragen, API-Calls).
+4.  **Formatter**: Bereitet die Rohdaten in sicherem Telegram-Markdown auf.
+
+### 🗄️ Das 3-Säulen-Datenmodell
+Alle Daten liegen standardmäßig in `data/` und sind aufgeteilt:
+- `state.db`: Nutzerprofile, gespeicherte Kurse und Gesprächshistorien.
+- `cache.db`: Hochperformante Caches für API-Ergebnisse und Mensa-Pläne.
+- `telemetry.db`: Statistiken, Token-Verbrauch und System-Logs.
 
 ---
 
-## 🚀 Lokale Installation & Setup
+## 🚀 Quickstart
 
-Wir nutzen [uv](https://github.com/astral-sh/uv) für blitzschnelles Dependency-Management.
+### Voraussetzungen
+- Python **3.11+**
+- [uv](https://github.com/astral-sh/uv) (empfohlen für Paketmanagement)
+- Ein Telegram-Bot-Token vom [@BotFather](https://t.me/botfather)
+- Ein LLM API-Key (Gemini, Anthropic, OpenAI, Groq oder Mistral)
 
-### 1. Voraussetzungen
-*   **Python 3.11** oder neuer.
-*   **uv** (`curl -LsSf https://astral.sh/uv/install.sh | sh`).
-*   **Telegram Bot Token** ([@BotFather](https://t.me/botfather)).
-*   **LLM API Key** (Google Gemini, Claude, oder OpenAI via LiteLLM).
-
-### 2. Repository klonen & Setup
+### Installation & Start
 ```bash
+# 1. Repository klonen
 git clone https://github.com/Bayyo1337/hka-agentic-raumzeit-bot.git
 cd hka-agentic-raumzeit-bot
+
+# 2. Abhängigkeiten installieren
 uv sync
+
+# 3. Konfiguration einrichten
+cp .env.example .env
+# Öffne .env und trage deine Keys ein (siehe Abschnitt Konfiguration)
+
+# 4. Initialisierung (Daten & Karten)
 uv run python scripts/setup/onboard.py
 uv run python scripts/setup/generate_maps.py
-```
 
-### 3. Testing & Start
-```bash
-# Validierung der Umgebung
-make test-e2e-dynamic
-
-# Bot starten
+# 5. Bot starten
 make run
 ```
 
 ---
 
-## 🛠️ Betrieb & Kommandos
+## ⚙️ Konfiguration
 
-### 👤 Nutzer-Befehle
-*   `/start` & `/help`: Einstieg und Befehlsübersicht.
-*   `/mensa`: Ruft den aktuellen Speiseplan der Mensa Moltke ab.
-*   `/setcourse`: Startet den Assistenten zur Personalisierung deines Stundenplans.
-*   `/myplan`: Zeigt deinen gespeicherten Stundenplan für den heutigen Tag.
-*   `/stats`: Deine persönlichen Nutzungsstatistiken und Token-Verbrauch.
-*   `/reset`: Löscht deinen bisherigen Gesprächsverlauf mit der KI.
-*   `/bug [beschreibung]`: Meldet einen Fehler direkt an das Entwickler-Team.
+Die Konfiguration erfolgt über die `.env` Datei.
 
-### 🛡️ Admin-Befehle
-#### System & Daten
-*   `/admin`: Kompakt-Dashboard mit Systemstatus und Statistiken.
-*   `/sync [all|courses|lecturers]`: Manuelle Synchronisation der HKA-Datenquellen.
-*   `/indexage`: Zeigt an, wie alt der aktuelle Kurs-Index ist.
-*   `/courses`: Listet alle aktuell im System bekannten Studiengänge auf.
-*   `/ping`: Einfacher Verbindungs- und Latenzcheck.
-*   `/maintenance`: Schaltet den Wartungsmodus (KI-Pause) ein/aus.
+| Variable | Erforderlich | Beschreibung | Beispiel |
+| :--- | :--- | :--- | :--- |
+| `TELEGRAM_BOT_TOKEN` | Ja | API-Token von Telegram | `123456:ABC...` |
+| `RAUMZEIT_LOGIN` | Ja | HKA-Account Login (für API) | `abcd1011` |
+| `RAUMZEIT_PASSWORD` | Ja | HKA-Account Passwort | `********` |
+| `LLM_PROVIDER` | Ja | Provider: `gemini`, `anthropic`, `openai`, `groq`, `mistral` | `gemini` |
+| `LLM_MODEL` | Nein | Spezifisches Modell (Standard: provider-dependent) | `gemini-1.5-flash` |
+| `GEMINI_API_KEY` | Ja* | API Key für Google Gemini (falls Provider=gemini) | `AIza...` |
+| `ALLOWED_USER_IDS` | Nein | Komma-getrennte IDs (Leer = alle erlaubt) | `12345,67890` |
+| `ADMIN_USER_IDS` | Ja | Komma-getrennte IDs für Admin-Rechte | `12345` |
+| `LOG_LEVEL` | Nein | `DEBUG`, `INFO`, `WARNING` (Standard: `INFO`) | `INFO` |
 
-#### Nutzer- & Feedback-Management
-*   `/user [ID|Username]`: Sucht detaillierte Informationen zu einem Nutzer.
-*   `/ban` / `/unban [ID]`: Sperrt oder entsperrt einen Nutzer für den Bot.
-*   `/broadcast [nachricht]`: Sendet eine wichtige Mitteilung an alle Nutzer.
-*   `/feedback`: Zeigt alle eingegangenen Bug-Reports und Nutzerfeedbacks.
-*   `/delfeedback [ID]`: Löscht einen Feedback-Eintrag nach der Bearbeitung.
-
-#### Konfiguration & Debugging
-*   `/loglevel [DEBUG|INFO|WARNING]`: Ändert die Detailtiefe der Logs zur Laufzeit.
-*   `/setprovider [openai|gemini|anthropic]`: Wechselt den LLM-Provider (LiteLLM).
-*   `/rooms`: Statusbericht über die Raumbelegung und Datenbank-Konsistenz.
-*   `/togglepersonal`: Aktiviert/Deaktiviert die Personalisierungs-Features global.
-*   `/togglemap`: Schaltet die automatische Karten-Generierung ein/aus.
+*\*Je nach gewähltem Provider muss der entsprechende Key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.) gesetzt sein.*
 
 ---
 
-## 🧠 Architektur & Technologie
+## 📱 Telegram Kommandos
 
-*   **Daten-Pfeiler (3-Pillar DB):** 
-    *   `state.db`: Nutzerprofile, Einstellungen und Session-States.
-    *   `cache.db`: Hochperformante Caches für Raumzeit- und Mensa-Daten.
-    *   `telemetry.db`: Detaillierte Logs und Token-Verbrauchs-Metriken.
-*   **Kern:** Asynchrones Python (APScheduler, Python-Telegram-Bot).
-*   **KI:** [LiteLLM](https://github.com/BerriAI/litellm) zur Abstraktion verschiedener Provider.
-*   **UI:** Modernes [Rich](https://github.com/Textualize/rich) Terminal-Dashboard für Echtzeit-Monitoring.
+### Nutzer-Befehle
+- `/start`: Begrüßung und erste Schritte.
+- `/help`: Detaillierte Hilfe und Beispielfragen.
+- `/setcourse`: Interaktiver Assistent zum Speichern deiner Kurse (Multi-Select).
+- `/myplan`: Zeigt deinen personalisierten Stundenplan für heute.
+- `/mensa`: Aktueller Speiseplan der Mensa Moltke.
+- `/stats`: Token-Verbrauch und Profil-Status.
+- `/bug`: Fehler oder Feedback an die Entwickler melden.
+- `/reset`: Löscht deinen aktuellen Gesprächskontext mit der KI.
 
-Der Bot trennt strikt zwischen **Intent-Parsing** (Erkennung des Nutzerwunschs) und **Execution** (deterministischer Python-Code), um Halluzinationen bei Fakten auszuschließen.
+### Admin-Befehle (nur für `ADMIN_USER_IDS`)
+- `/admin`: Zentrales Dashboard für Systemstatus & Statistiken.
+- `/sync [all|courses|lecturers]`: Manuelle Daten-Synchronisation mit der HKA.
+- `/maintenance`: Schaltet den KI-Wartungsmodus ein/aus.
+- `/broadcast [text]`: Sendet eine Nachricht an alle registrierten Nutzer.
+- `/user [id/name]`: Sucht Informationen zu einem bestimmten Nutzer.
+- `/ban`/`/unban [id]`: Sperrt oder entsperrt Nutzer.
+- `/loglevel [level]`: Ändert die Detailtiefe der Logs im laufenden Betrieb.
+- `/togglepersonal`: Aktiviert/Deaktiviert globale Personalisierungs-Features.
+- `/togglemap`: Aktiviert/Deaktiviert die Karten-Generierung.
+- `/rooms`: Statusbericht über die Raumbelegung und Datenbank-Konsistenz.
+- `/ping`: Einfacher Verbindungs- und Latenzcheck.
+- `/indexage` & `/courses`: Status des Kurs-Index und Liste der Studiengänge.
+- `/clearhistory`: Löscht die Historie eines Nutzers (Admin-Sicht).
 
 ---
-*Disclaimer: Dies ist ein inoffizielles Projekt und steht in keiner direkten Verbindung zur Verwaltung der Hochschule Karlsruhe.*
+
+## 🛠 Entwicklung & Qualitätssicherung
+
+### Make-Targets
+- `make run`: Startet den Bot inkl. Dashboard.
+- `make check`: Führt einen System-Check der Umgebung durch.
+- `make test-e2e-dynamic`: Erzeugt dynamische Testfälle und führt End-to-End Tests aus.
+- `make lint`: Prüft den Code-Stil mittels `ruff`.
+- `make clean`: Bereinigt Cache und temporäre Dateien.
+
+### Projekt-Konventionen
+- **Issues & Features**: Neue Aufgaben werden in `.gemini/prompts/` analysiert und in `features/specs/` spezifiziert.
+- **Logs**: Reale Session-Logs werden unter `.gemini/logs/` archiviert und in `session_log.md` indiziert.
+- **Tests**: Neue Features müssen durch Tests in `tests/` (z.B. `test_personalization.py`) abgesichert werden.
+
+---
+
+## ❓ Fehlerbehebung (FAQ)
+
+**Q: Der Bot antwortet "Keine Belegungen gefunden", obwohl Vorlesungen stattfinden.**
+A: Prüfe mit `/indexage`, wie alt der Index ist. Nutze `/sync courses`, um die Daten zu aktualisieren. Manchmal liefert die HKA-API für sehr spezifische Filter keine Ergebnisse.
+
+**Q: Die Karte zeigt das falsche Gebäude.**
+A: Die Karten-Logik basiert auf Regex-Matching der Raumnamen (z.B. "M-102" -> Gebäude M). Falls ein Raum nicht erkannt wird, melde dies bitte per `/bug`.
+
+**Q: Telegram zeigt "Error: Can't find end of the entity".**
+A: Dies deutet auf einen Formatierungsfehler hin. Der Bot nutzt einen globalen Escaper, aber bei neuen Tools muss auf `src/formatter.py` geachtet werden.
+
+---
+
+## 📜 Lizenz & Disclaimer
+
+Dieses Projekt ist unter der **AGPL-3.0** lizenziert.
+
+**Disclaimer**: Dies ist ein **inoffizielles** Projekt von Studierenden für Studierende. Es besteht keine offizielle Verbindung zur Hochschule Karlsruhe (HKA). Die Daten stammen aus öffentlich zugänglichen oder studentisch genutzten Schnittstellen und sind ohne Gewähr.
