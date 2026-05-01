@@ -562,13 +562,19 @@ async def get_mensa_meal_by_id(meal_id: str) -> dict | None:
     return json.loads(row[0]) if row else None
 
 
-async def get_all_mensa_meals_for_fuzzy() -> dict[str, str]:
+async def get_all_mensa_meals_for_fuzzy(date: str | None = None) -> dict[str, str]:
     async with aiosqlite.connect(CACHE_DB) as db:
-        cutoff = (datetime.now() - timedelta(days=3)).date().isoformat()
-        async with db.execute(
-            "SELECT name, meal_id FROM mensa_meals WHERE date >= ?", (cutoff,)
-        ) as cur:
-            rows = await cur.fetchall()
+        if date:
+            async with db.execute(
+                "SELECT name, meal_id FROM mensa_meals WHERE date = ?", (date,)
+            ) as cur:
+                rows = await cur.fetchall()
+        else:
+            cutoff = (datetime.now() - timedelta(days=3)).date().isoformat()
+            async with db.execute(
+                "SELECT name, meal_id FROM mensa_meals WHERE date >= ?", (cutoff,)
+            ) as cur:
+                rows = await cur.fetchall()
     return {r[0]: r[1] for r in rows}
 
 

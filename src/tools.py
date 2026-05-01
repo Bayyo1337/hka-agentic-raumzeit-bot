@@ -1309,10 +1309,10 @@ async def _fetch_canteens_raw():
         data = r.json()
         return (data.get("data") or {}).get("getCanteens", [])
 
-async def get_mensa_meal_details(meal_id: str, is_retry: bool = False) -> dict:
+async def get_mensa_meal_details(meal_id: str, date_str: str | None = None, is_retry: bool = False) -> dict:
     """Holt Allergene und Zusatzstoffe für ein spezifisches Gericht."""
     start_t = time.monotonic()
-    log.info("Mensa-Detail: Suche Infos für '%s' (is_retry=%s)", meal_id, is_retry)
+    log.info("Mensa-Detail: Suche Infos für '%s' (date=%s, is_retry=%s)", meal_id, date_str, is_retry)
     
     # 1. Schneller RAM-Check (ohne Lock)
     if meal_id in _MEALS_CACHE:
@@ -1337,39 +1337,34 @@ async def get_mensa_meal_details(meal_id: str, is_retry: bool = False) -> dict:
         except Exception as e:
             log.warning("Mensa-DB: Fehler bei ID-Lookup: %s", e)
 
-        # 4. Kaltstart-Check: Haben wir Daten für heute? Falls nein: Warming.
-        if not is_retry:
-            try:
-                today_meals = await db.get_mensa_meals_for_day(_date.today().isoformat())
-                if not today_meals:
-                    log.info("Mensa-Cache leer für heute. Starte Auto-Warming...")
-                    # Lock kurz verlassen, da get_mensa_menu selbst den Lock nutzt
-                    pass # Placeholder für Lock-Release Logik unten
-            except Exception:
-                pass
-
-    # Auto-Warming außerhalb des ersten Locks (get_mensa_menu verwaltet eigenen Lock)
+    # 4. Kaltstart-Check & Date-Aware Warming
     if not is_retry:
+        target_date = date_str or _date.today().isoformat()
+        # Parse date from meal_id if it ends with YYYY-MM-DD
+        match = re.search(r'(\d{4}-\d{2}-\d{2})$', meal_id)
+        if match:
+            target_date = match.group(1)
+            
         try:
-            # Check erneut ob DB leer ist
-            if not await db.get_mensa_meals_for_day(_date.today().isoformat()):
-                res = await get_mensa_menu()
+            if not await db.get_mensa_meals_for_day(target_date):
+                log.info("Mensa-Cache leer für %s. Starte Auto-Warming...", target_date)
+                res = await get_mensa_menu(date=target_date)
                 if "error" in res:
-                    return res # API Fehler direkt zurückgeben
+                    return res
                 # Rekursiver Aufruf: Jetzt sollte es im Cache sein
-                return await get_mensa_meal_details(meal_id, is_retry=True)
+                return await get_mensa_meal_details(meal_id, date_str=target_date, is_retry=True)
         except Exception as e:
             log.warning("Mensa-Warming fehlgeschlagen: %s", e)
 
     async with _MENSA_LOCK:
         # 5. Spezial-Fallback für LLM-Halluzinationen (Line/Kategorie)
-        import re
         def _norm_radical(s):
             return re.sub(r'[^a-z0-9]', '', s.lower().replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss"))
 
         try:
+            target_date = date_str or _date.today().isoformat()
             q_norm_radical = _norm_radical(meal_id)
-            today_meals = await db.get_mensa_meals_for_day(_date.today().isoformat())
+            today_meals = await db.get_mensa_meals_for_day(target_date)
             
             if today_meals:
                 # 3a. Prüfe, ob die Anfrage exakt einem Linien-Namen entspricht (z.B. "Wahlessen 2")
@@ -1395,7 +1390,6 @@ async def get_mensa_meal_details(meal_id: str, is_retry: bool = False) -> dict:
                     }
                     
                 # 3b. Falls kein Line-Match, probiere Regex für "Kategorie + Index" (z.B. gut_günstig_1)
-                import re
                 if (pattern_match := re.match(r'^(.+?)[_ ]?([0-9]+)(?:_.*)?$', meal_id)):
                     cat_query = _norm_radical(pattern_match.group(1))
                     idx = int(pattern_match.group(2)) - 1 # 1-based to 0-based
@@ -1414,11 +1408,12 @@ async def get_mensa_meal_details(meal_id: str, is_retry: bool = False) -> dict:
         q_norm = _norm(meal_id)
         if q_norm in _MEALS_BY_NAME_CACHE:
             log.info("Mensa-Detail: RAM-Namenscache Treffer für '%s'", meal_id)
-            return await get_mensa_meal_details(_MEALS_BY_NAME_CACHE[q_norm])
+            return await get_mensa_meal_details(_MEALS_BY_NAME_CACHE[q_norm], date_str=date_str)
         
         # Dann Fuzzy Match über alle bekannten Namen aus der DB
         try:
-            all_names = await db.get_all_mensa_meals_for_fuzzy()
+            target_date = date_str or _date.today().isoformat()
+            all_names = await db.get_all_mensa_meals_for_fuzzy(date=target_date)
             # all_names ist {Name: ID}
             norm_to_id = {_norm(name): mid for name, mid in all_names.items()}
             
@@ -1427,7 +1422,7 @@ async def get_mensa_meal_details(meal_id: str, is_retry: bool = False) -> dict:
                 if q_norm in norm_name:
                     elapsed = time.monotonic() - start_t
                     log.info("Mensa-Detail: DB-Substring-Match für '%s' -> '%s' (ID: %s, %.2fs)", meal_id, norm_name, mid, elapsed)
-                    return await get_mensa_meal_details(mid)
+                    return await get_mensa_meal_details(mid, date_str=target_date)
             
             # B. Dann Fuzzy Match (bei Tippfehlern)
             matches = difflib.get_close_matches(q_norm, norm_to_id.keys(), n=1, cutoff=0.4)
@@ -1435,7 +1430,7 @@ async def get_mensa_meal_details(meal_id: str, is_retry: bool = False) -> dict:
                 target_id = norm_to_id[matches[0]]
                 elapsed = time.monotonic() - start_t
                 log.info("Mensa-Detail: DB-Fuzzy-Match für '%s' -> '%s' (ID: %s, %.2fs)", meal_id, matches[0], target_id, elapsed)
-                return await get_mensa_meal_details(target_id)
+                return await get_mensa_meal_details(target_id, date_str=target_date)
         except Exception as e:
             log.warning("Mensa-DB: Fehler bei Fuzzy-Lookup: %s", e)
 
@@ -1560,7 +1555,8 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "meal_id": {"type": "string", "description": "Die UUID oder der VOLLSTÄNDIGE Name des Gerichts (bevorzugt)."}
+                    "meal_id": {"type": "string", "description": "Die UUID oder der VOLLSTÄNDIGE Name des Gerichts (bevorzugt)."},
+                    "date": {"type": "string", "description": "Datum im Format YYYY-MM-DD (optional)."}
                 },
                 "required": ["meal_id"]
             }
@@ -1643,7 +1639,7 @@ TOOL_HANDLERS = {
     "get_lecturer_timetable":  lambda inp: get_lecturer_timetable(inp["account"], inp.get("date")),
     "get_lecturer_info":       lambda inp: get_lecturer_info(inp["account"]),
     "get_mensa_menu":          lambda inp: get_mensa_menu(inp.get("canteen"), inp.get("date")),
-    "get_mensa_meal_details":  lambda inp: get_mensa_meal_details(inp.get("meal_id")),
+    "get_mensa_meal_details":  lambda inp: get_mensa_meal_details(inp.get("meal_id"), inp.get("date")),
     "get_departments":         lambda inp: get_departments(),
     "get_courses_of_study":    lambda inp: get_courses_of_study(inp.get("faculty")),
     "get_university_calendar": lambda inp: get_university_calendar(),
