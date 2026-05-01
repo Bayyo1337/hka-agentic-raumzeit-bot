@@ -16,7 +16,8 @@ import asyncio
 import json
 import logging
 import os
-from datetime import date
+import re
+from datetime import date, timedelta
 from typing import Optional
 import litellm
 from src.config import settings
@@ -102,6 +103,22 @@ ALL_TOOLS_DEF = {
     "get_next_occurrence": "get_next_occurrence: module_name (z.B. \"Mathe 1\"), course_key (optional, z.B. \"MABB.2\") - NUTZE DIES BEI FRAGEN WIE 'Wann habe ich...?'",
     "get_campus_map": "get_campus_map: room_or_building (z.B. \"LI-145\" oder \"Gebäude M\") - NUTZE DIES NUR BEI FRAGEN NACH DEM ORT/STOCKWERK!"
 }
+
+
+def resolve_german_weekday(text: str, ref_date: date) -> date | None:
+    """Extrahiert einen deutschen Wochentag aus Text und gibt das nächste Datum ab ref_date zurück."""
+    weekdays = {
+        "montag": 0, "dienstag": 1, "mittwoch": 2, "donnerstag": 3,
+        "freitag": 4, "samstag": 5, "sonntag": 6
+    }
+    text_lower = text.lower()
+    for name, day_idx in weekdays.items():
+        if name in text_lower:
+            days_ahead = day_idx - ref_date.weekday()
+            if days_ahead < 0:
+                days_ahead += 7
+            return ref_date + timedelta(days=days_ahead)
+    return None
 
 
 def _extraction_prompt(primary_course: Optional[str] = None, intent: str = "smalltalk_fallback") -> str:
