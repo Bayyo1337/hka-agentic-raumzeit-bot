@@ -1,14 +1,37 @@
 import pytest
 import json
 import os
+import shutil
 import pytest_asyncio
 from datetime import datetime, timedelta
 from src import db
 
 @pytest_asyncio.fixture(autouse=True)
 async def db_init():
+    # Paths to clear
+    dbs = [db.STATE_DB, db.CACHE_DB, db.TELEMETRY_DB]
+    feedback_dir = "data/feedback"
+    
+    def cleanup():
+        # Clear databases
+        for db_path in dbs:
+            if os.path.exists(db_path):
+                try:
+                    os.remove(db_path)
+                except Exception:
+                    pass
+        # Clear feedback directory
+        if os.path.exists(feedback_dir):
+            try:
+                shutil.rmtree(feedback_dir)
+            except Exception:
+                pass
+        os.makedirs(feedback_dir, exist_ok=True)
+
+    cleanup()
     await db.init()
     yield
+    cleanup()
 
 @pytest.mark.asyncio
 async def test_privacy_settings_defaults():
@@ -115,6 +138,20 @@ def test_pii_redaction():
     
     # Test: IBAN boundaries
     assert redact_pii("IBANDE1234567890123456789012") == "IBANDE1234567890123456789012" # No boundary
+
+    # --- EDGE CASES ---
+    # Case-sensitivity
+    assert redact_pii("MAIL@PROVIDER.DE") == "[EMAIL]"
+    
+    # Multiple PII elements
+    multi_text = "Emails: a@b.com, c@d.de; Phone: +49123 456789, 0721-12345"
+    multi_redacted = redact_pii(multi_text)
+    assert multi_redacted.count("[EMAIL]") == 2
+    assert multi_redacted.count("[PHONE]") == 2
+    
+    # PII immediately followed by punctuation
+    assert redact_pii("Call me: +4912345678.") == "Call me: [PHONE]."
+    assert redact_pii("Write to: info@h-ka.de!") == "Write to: [EMAIL]!"
 
 @pytest.mark.asyncio
 async def test_feedback_json_storage_and_export():
