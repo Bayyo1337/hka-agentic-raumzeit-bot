@@ -119,6 +119,18 @@ _ADMIN_COMMANDS = _USER_COMMANDS + [
 def _is_allowed(user_id: int) -> bool:
     return not settings.allowed_ids or user_id in settings.allowed_ids
 
+def build_optin_text() -> str:
+    """Erzeugt den Text für die DSGVO-Zustimmung."""
+    return (
+        "🏫 *Willkommen beim Raumzeit KI-Bot!*\n\n"
+        "Damit ich deine Fragen in natürlicher Sprache beantworten kann, muss ich:\n"
+        "1. Deine Nachrichten an unsere KI-Anbieter (z.B. Mistral/OpenAI) weiterleiten.\n"
+        "2. Einen Chat-Verlauf speichern, damit die KI den Kontext versteht.\n"
+        "3. Ein Basis-Profil (Telegram-ID) für Rate-Limiting anlegen.\n\n"
+        "Ohne diese Daten kann der Bot nicht funktionieren. Du kannst später Details via `/consent` "
+        "anpassen oder via `/delete` alles löschen."
+    )
+
 def build_start_text() -> str:
     """Erzeugt den Willkommenstext für /start."""
     return (
@@ -163,7 +175,15 @@ def build_help_text(is_admin: bool) -> str:
         "`/mensa` – Heutiger Speiseplan (Moltke)",
         "`/bug` – Fehler melden oder Feedback geben (interaktiv)",
         "`/reset` – Aktuellen Gesprächskontext löschen",
-        "`/stats` – Deine Token-Verbrauch & gespeicherte Kurse",
+        "`/stats` – Deine Profil-Daten & Kurse",
+        "",
+        "🔒 *Datenschutz & DSGVO:*",
+        "`/privacy` – Datenschutzerklärung anzeigen",
+        "`/consent` – Privacy-Einstellungen verwalten (Opt-In/Out)",
+        "`/data` – Übersicht deiner gespeicherten Daten",
+        "`/export` – Daten-Export als JSON anfordern",
+        "`/delete` – Alle deine Daten unwiderruflich löschen",
+        "`/retention` – Aufbewahrungsfristen anpassen",
         "",
     ]
     
@@ -416,11 +436,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_id = update.effective_user.id
 
     if data == "privacy_opt_in_details":
-        keyboard = [[InlineKeyboardButton("✅ Ich stimme zu", callback_data="privacy_opt_in")]]
         await query.edit_message_text(
-            "🔒 *DSGVO Details*\n\nDie Verarbeitung deiner Daten ist notwendig, um die Features dieses Bots nutzen zu können.\nWeitere Details findest du unter /privacy.\n\nBist du einverstanden?",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
+            "Alle Informationen zum Datenschutz findest du hier:\n\n"
+            "Nutze den Befehl `/privacy`, um die Details direkt im Chat zu lesen, oder besuche "
+            "[GitHub](https://github.com/Bayyo1337/hka-agentic-raumzeit-bot/blob/gemini/docs/DSGVO.md).\n\n"
+            "Bist du mit der Verarbeitung einverstanden?",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Ich stimme zu", callback_data="privacy_opt_in")]]),
+            parse_mode="Markdown",
+            disable_web_page_preview=True
         )
         return
 
@@ -431,7 +454,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if pending_msg:
             chat_id = update.effective_chat.id
             user = update.effective_user
-            await _process_user_message(update, context, chat_id, user_id, user, pending_msg)
+            asyncio.create_task(_process_user_message(update, context, chat_id, user_id, user, pending_msg))
         return
 
     if data == "setc_abort":
@@ -682,7 +705,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             [InlineKeyboardButton("📄 Details lesen", callback_data="privacy_opt_in_details")]
         ]
         await update.message.reply_text(
-            "🔒 *Datenschutz & DSGVO*\n\nUm deine Anfragen zu beantworten, verarbeite ich deine Eingaben (Profil, Historie) und sende sie an Dritte (KI APIs). Bitte stimme der Datenverarbeitung zu.",
+            build_optin_text(),
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
@@ -692,13 +715,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int, user, text: str) -> None:
     if _maintenance[0] and not admin._is_admin(user_id):
-        await update.message.reply_text(_maintenance[1])
+        await update.effective_message.reply_text(_maintenance[1])
         return
 
     custom_limit = await db.get_custom_rate_limit(user_id)
     limit = custom_limit if custom_limit >= 0 else settings.rate_limit_per_hour
     if not await db.check_rate_limit(user_id, limit):
-        await update.message.reply_text(f"⏳ Du hast das Limit von {limit} Anfragen/Stunde erreicht.")
+        await update.effective_message.reply_text(f"⏳ Du hast das Limit von {limit} Anfragen/Stunde erreicht.")
         return
 
     # Bug-Reporting Workflow
@@ -718,7 +741,7 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
                 keyboard.append([InlineKeyboardButton(f"💬 {cmd[:30]}...", callback_data=f"bug_ctx:{cmd[:50]}")])
             keyboard.append([InlineKeyboardButton("⏭ Kein Kontext", callback_data="bug_no_ctx")])
             
-            await update.message.reply_text(
+            await update.effective_message.reply_text(
                 f"Titel: *{text}*\n\n*Schritt 2:* Welcher deiner letzten Befehle gehört zu diesem Problem?",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
@@ -729,7 +752,7 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
             user_info = f"@{user.username}" if user.username else str(user_id)
             filename = await admin.save_user_issue(report["title"], report.get("context", "N/A"), text, user_info)
             _bug_reports.pop(user_id)
-            await update.message.reply_text(
+            await update.effective_message.reply_text(
                 f"✅ *Vielen Dank!*\n\nDein Feedback wurde gespeichert:\n`{filename}`",
                 parse_mode="Markdown"
             )
@@ -740,11 +763,11 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
         normalized = text.strip().lower()
         original_query, course_key, stufe, queried_date = _pending_confirmation.pop(chat_id)
         if normalized in _JA:
-            await update.message.reply_text("👍 Alles klar.")
+            await update.effective_message.reply_text("👍 Alles klar.")
             return
         if normalized in _NEIN or stufe >= 2:
             if stufe == 1:
-                msg = await update.message.reply_text("🔄 Suche alle Varianten...")
+                msg = await update.effective_message.reply_text("🔄 Suche alle Varianten...")
                 _bot_messages.setdefault(chat_id, []).append(msg.message_id)
                 try:
                     result = await raumzeit.fetch_course_brute_force(course_key, queried_date)
@@ -764,11 +787,11 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
                         result = await raumzeit.get_course_timetable(user_key, queried_date)
                         reply = formatter.format_results([("get_course_timetable", result)], original_query)
                     except Exception as exc:
-                        await update.message.reply_text(f"⚠️ Fehler: {exc}"); return
+                        await update.effective_message.reply_text(f"⚠️ Fehler: {exc}"); return
                     if CONFIRM_SENTINEL in reply: stufe = 3
                     else: await _send_reply(update, chat_id, reply); return
             if stufe >= 3:
-                await update.message.reply_text("😕 Keine Daten gefunden. Deine Anfrage wurde für manuelle Prüfung gespeichert.")
+                await update.effective_message.reply_text("😕 Keine Daten gefunden. Deine Anfrage wurde für manuelle Prüfung gespeichert.")
                 return
 
     user_label = f"@{user.username}" if user.username else str(user_id)
@@ -841,7 +864,7 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
                 _pending_confirmation[chat_id] = (text, course, 1, raw_date)
             await _send_reply(update, chat_id, reply)
     except Exception as exc:
-        log.exception("Agent-Fehler"); await update.message.reply_text(f"⚠️ Fehler: {exc}")
+        log.exception("Agent-Fehler"); await update.effective_message.reply_text(f"⚠️ Fehler: {exc}")
         
     if not IS_DAEMON:
         # Den Prompt für den lokalen Konsolennutzer nach den Logs neu zeichnen
@@ -854,9 +877,9 @@ async def _send_reply(update, chat_id: int, reply: str) -> None:
     
     if len(reply) <= MAX_LEN:
         try:
-            msg = await update.message.reply_text(reply, parse_mode="Markdown")
+            msg = await update.effective_message.reply_text(reply, parse_mode="Markdown")
         except Exception:
-            msg = await update.message.reply_text(reply)
+            msg = await update.effective_message.reply_text(reply)
         _bot_messages.setdefault(chat_id, []).append(msg.message_id)
         return
 
@@ -887,9 +910,9 @@ async def _send_reply(update, chat_id: int, reply: str) -> None:
     for i, chunk in enumerate(chunks):
         suffix = f" ({i+1}/{len(chunks)})" if len(chunks) > 1 else ""
         try:
-            msg = await update.message.reply_text(chunk + suffix, parse_mode="Markdown")
+            msg = await update.effective_message.reply_text(chunk + suffix, parse_mode="Markdown")
         except Exception:
-            msg = await update.message.reply_text(chunk + suffix)
+            msg = await update.effective_message.reply_text(chunk + suffix)
         _bot_messages.setdefault(chat_id, []).append(msg.message_id)
 
 async def _run_index_build():

@@ -674,41 +674,55 @@ async def run_gdpr_cleanup() -> dict:
 # ── Nutzerverwaltung (STATE_DB) ──────────────────────────────────────────────
 
 async def get_consent_status(user_id: int) -> int:
-    async with aiosqlite.connect(STATE_DB) as db:
-        async with db.execute(
-            "SELECT has_consented FROM users WHERE user_id=?", (user_id,)
-        ) as cur:
-            row = await cur.fetchone()
-    return row[0] if row else 0
+    try:
+        async with aiosqlite.connect(STATE_DB) as db:
+            async with db.execute(
+                "SELECT has_consented FROM users WHERE user_id=?", (user_id,)
+            ) as cur:
+                row = await cur.fetchone()
+        return row[0] if row else 0
+    except Exception as e:
+        log.error("Error in get_consent_status: %s", e)
+        return 0
 
 async def set_consent_status(user_id: int, status: int) -> None:
-    async with aiosqlite.connect(STATE_DB) as db:
-        await db.execute(
-            "UPDATE users SET has_consented=? WHERE user_id=?", (status, user_id)
-        )
-        await db.commit()
-
-async def save_pending_message(user_id: int, msg: str) -> None:
-    async with aiosqlite.connect(STATE_DB) as db:
-        await db.execute(
-            "UPDATE users SET pending_message=? WHERE user_id=?", (msg, user_id)
-        )
-        await db.commit()
-
-async def get_and_clear_pending_message(user_id: int) -> str:
-    async with aiosqlite.connect(STATE_DB) as db:
-        async with db.execute(
-            "SELECT pending_message FROM users WHERE user_id=?", (user_id,)
-        ) as cur:
-            row = await cur.fetchone()
-        
-        msg = row[0] if row and row[0] else ""
-        if msg:
+    try:
+        async with aiosqlite.connect(STATE_DB) as db:
             await db.execute(
-                "UPDATE users SET pending_message='' WHERE user_id=?", (user_id,)
+                "UPDATE users SET has_consented=? WHERE user_id=?", (status, user_id)
             )
             await db.commit()
-        return msg
+    except Exception as e:
+        log.error("Error in set_consent_status: %s", e)
+
+async def save_pending_message(user_id: int, msg: str) -> None:
+    try:
+        async with aiosqlite.connect(STATE_DB) as db:
+            await db.execute(
+                "UPDATE users SET pending_message=? WHERE user_id=?", (msg, user_id)
+            )
+            await db.commit()
+    except Exception as e:
+        log.error("Error in save_pending_message: %s", e)
+
+async def get_and_clear_pending_message(user_id: int) -> str:
+    try:
+        async with aiosqlite.connect(STATE_DB) as db:
+            async with db.execute(
+                "SELECT pending_message FROM users WHERE user_id=?", (user_id,)
+            ) as cur:
+                row = await cur.fetchone()
+            
+            msg = row[0] if row and row[0] else ""
+            if msg:
+                await db.execute(
+                    "UPDATE users SET pending_message='' WHERE user_id=?", (user_id,)
+                )
+                await db.commit()
+            return msg
+    except Exception as e:
+        log.error("Error in get_and_clear_pending_message: %s", e)
+        return ""
 
 async def upsert_user(user_id: int, username: str, first_name: str) -> None:
     async with aiosqlite.connect(STATE_DB) as db:
