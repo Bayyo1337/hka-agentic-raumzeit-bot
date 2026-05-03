@@ -143,6 +143,24 @@ Beispiele:
             )
         )
 
+    async def _log_fallback(self, text: str, user_context: dict, result: RouterOutput) -> None:
+        try:
+            from src import admin
+            user_id = int(user_context.get("user_id") or 0)
+            chat_id = int(user_context.get("chat_id") or 0)
+            user_info = user_context.get("user_label") or str(user_id or chat_id)
+            primary_course = user_context.get("primary_course")
+            await admin.save_router_fallback(
+                user_id=user_id,
+                chat_id=chat_id,
+                user_info=user_info,
+                text=text,
+                primary_course=primary_course,
+                router_result=result.model_dump(),
+            )
+        except Exception as exc:
+            log.debug("Router fallback logging failed: %s", exc)
+
     async def classify_message(self, text: str, user_context: dict, state: dict) -> RouterOutput:
         """Hauptmethode für das Routing einer Nachricht."""
         
@@ -159,6 +177,8 @@ Beispiele:
         # 2. LLM Fallback
         primary_course = user_context.get("primary_course")
         log.debug("Router LLM-Fallback für: %.50s... (Profile: %s)", text, primary_course)
-        return await self._llm_fallback(text, primary_course=primary_course)
+        result = await self._llm_fallback(text, primary_course=primary_course)
+        await self._log_fallback(text, user_context, result)
+        return result
 
 router_instance = Router()

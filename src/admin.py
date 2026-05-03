@@ -482,6 +482,36 @@ async def save_issue_from_log(data: dict) -> str:
     return await db.save_feedback_json(data)
 
 
+async def save_router_fallback(
+    user_id: int,
+    chat_id: int,
+    user_info: str,
+    text: str,
+    primary_course: str | None,
+    router_result: dict | None = None,
+) -> str:
+    """Speichert Router-Fallback-Inputs als JSON in data/feedback/."""
+    from src import privacy
+
+    if user_id > 0:
+        privacy_settings = await db.get_privacy_settings(user_id)
+        if not privacy_settings.get("allow_error_reports", False):
+            return ""
+
+    data = {
+        "type": "router_fallback",
+        "user_input": privacy.redact_pii(text),
+        "user_info": user_info,
+        "user_id": user_id,
+        "chat_id": chat_id,
+        "primary_course": primary_course,
+    }
+    if router_result is not None:
+        data["router_result"] = router_result
+
+    return await db.save_feedback_json(data)
+
+
 async def save_user_issue(title: str, context_cmd: str, comment: str, user_info: str) -> str:
     """Speichert ein vom Nutzer gemeldetes Feedback als JSON in data/feedback/."""
     from src import privacy
