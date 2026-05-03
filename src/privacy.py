@@ -54,7 +54,7 @@ async def cmd_privacy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Zeigt eine Übersicht der gespeicherten Daten des Nutzers."""
     user_id = update.effective_user.id
-    profile = await db.get_user(user_id)
+    profile = await db.get_user(user_id) or {}
     history = await db.load_history(user_id)
     tokens = await db.get_tokens(user_id)
     settings = await db.get_privacy_settings(user_id)
@@ -251,6 +251,7 @@ def register_handlers(app):
     app.add_handler(CallbackQueryHandler(handle_retention_presets, pattern="^privacy_preset_"))
 
 def anonymize_user_id(user_id: int | None) -> str:
+    """Return a stable, non-reversible label for logs without exposing the raw ID."""
     if user_id is None:
         return "user:unknown"
     digest = hashlib.sha256(str(user_id).encode("utf-8")).hexdigest()[:8]

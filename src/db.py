@@ -754,16 +754,6 @@ async def get_and_clear_pending_message(user_id: int) -> str:
         log.error("Error in get_and_clear_pending_message: %s", e)
         return ""
 
-async def ensure_user_record(user_id: int) -> None:
-    async with aiosqlite.connect(STATE_DB) as db:
-        await db.execute("""
-            INSERT INTO users (user_id, username, first_name, last_seen)
-            VALUES (?, '', '', ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                last_seen = excluded.last_seen
-        """, (user_id, datetime.now().isoformat()))
-        await db.commit()
-
 async def upsert_user(user_id: int, username: str, first_name: str) -> None:
     async with aiosqlite.connect(STATE_DB) as db:
         await db.execute("""

@@ -705,7 +705,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("⛔ Du bist nicht berechtigt, diesen Bot zu nutzen.")
         return
 
-    await db.ensure_user_record(user_id)
     privacy_settings = await db.get_privacy_settings(user_id)
 
     if not admin._is_admin(user_id) and await db.is_banned(user_id):
