@@ -91,7 +91,8 @@ Deine Privatsphäre ist uns wichtig. Der Bot implementiert:
 - **Datenminimierung**: Es wird nur gespeichert, was für die Funktion nötig ist.
 - **Kontrolle**: Mit `/data`, `/export` und `/delete` behältst du die volle Kontrolle über deine Daten.
 - **Transparenz**: Alle Speicherorte und Zwecke sind in der [Datenschutzerklärung](docs/DSGVO.md) dokumentiert.
-- **PII-Redaktion**: Automatische Filterung von E-Mails/Telefonnummern vor der KI-Verarbeitung.
+- **PII-Redaktion**: "Best-Effort" Schwärzung von E-Mails, Telefonnummern und IBANs vor der KI-Verarbeitung oder Log-Speicherung.
+- **Telemetrie-Opt-Out**: Vollständiger Bypass des Rate-Limitings und der Telemetrie-Speicherung bei Widerspruch.
 
 ---
 

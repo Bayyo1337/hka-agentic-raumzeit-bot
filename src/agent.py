@@ -16,7 +16,6 @@ import asyncio
 import json
 import logging
 import os
-import re
 from datetime import date, timedelta
 from typing import Optional
 import litellm
@@ -279,7 +278,7 @@ async def run(user_message: str, history: list[dict], user_id: int | None = None
 
     # Hardened Logging
     log.info("LLM Request for %s (Intent: %s)", user_label or f"User:{user_id}", intent)
-    if settings.debug and os.environ.get("ALLOW_PII_DEBUG_LOGS") == "1":
+    if getattr(settings, "debug", False) and os.environ.get("ALLOW_PII_DEBUG_LOGS") == "1":
         log.debug("FULL PROMPT (PII ENABLED):\n%s", json.dumps(messages, indent=2, ensure_ascii=False))
     else:
         log.debug("FULL PROMPT (PII REDACTED):\n%s", json.dumps(messages, indent=2, ensure_ascii=False).replace(user_message, "[USER_MSG_REDACTED]"))

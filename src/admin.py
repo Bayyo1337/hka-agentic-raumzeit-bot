@@ -4,9 +4,8 @@ Admin-Kommando-Handler für den Telegram-Bot.
 
 import asyncio
 import logging
-import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.helpers import escape_markdown
@@ -485,14 +484,26 @@ async def save_issue_from_log(data: dict) -> str:
 
 async def save_user_issue(title: str, context_cmd: str, comment: str, user_info: str) -> str:
     """Speichert ein vom Nutzer gemeldetes Feedback als JSON in data/feedback/."""
+    from src import privacy
     user_id = _extract_user_id(user_info)
+
+    report_uid = user_id
+    anonymized = False
+    
+    if user_id > 0:
+        privacy_settings = await db.get_privacy_settings(user_id)
+        if not privacy_settings.get("allow_error_reports", False):
+            report_uid = 0
+            user_info = "Anonymous"
+            anonymized = True
 
     data = {
         "type": "bug",
-        "title": title,
-        "context_cmd": context_cmd,
-        "comment": comment,
+        "title": privacy.redact_pii(title),
+        "context_cmd": privacy.redact_pii(context_cmd),
+        "comment": privacy.redact_pii(comment),
         "user_info": user_info,
-        "user_id": user_id
+        "user_id": report_uid,
+        "anonymized": anonymized
     }
     return await db.save_feedback_json(data)

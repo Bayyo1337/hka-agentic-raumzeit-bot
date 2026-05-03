@@ -23,8 +23,9 @@ Wir speichern nur Daten, die technisch notwendig sind, um dir die Funktionen des
 
 ## 3. Datenverarbeitung durch KI-Modelle
 Wenn du eine natürliche Frage stellst, senden wir den Text an einen KI-Provider (z.B. Mistral AI oder OpenAI).
-- **Redaktion:** Wir versuchen, E-Mails, Telefonnummern und IBANs automatisch zu entfernen, bevor sie gesendet werden.
+- **Redaktion:** Wir führen eine "Best-Effort" Redaktion (Schwärzung) von E-Mails, Telefonnummern und IBANs durch, bevor Daten an die KI gesendet oder als Fehlerbericht gespeichert werden. Es gibt keine absolute Garantie auf vollständige Anonymisierung.
 - **Transparenz:** Du kannst die KI-Verarbeitung sowie die Erstellung von Fehlerberichten (`allow_error_reports`) jederzeit via `/consent` deaktivieren. Der Bot funktioniert dann nur noch eingeschränkt.
+- **Telemetrie-Opt-Out:** Wenn die Telemetrie via `/consent` deaktiviert wird, werden keine Zeitstempel in der `telemetry.db` gespeichert. Das Rate-Limiting wird für den betreffenden Nutzer ausgesetzt (Bypass).
 
 ## 4. Deine Rechte (DSGVO)
 Der Bot bietet integrierte Werkzeuge, um deine Rechte wahrzunehmen:

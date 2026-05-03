@@ -33,7 +33,7 @@ Deine Daten gehören dir. Hier ist eine Übersicht, was dieser Bot speichert und
 
 <b>3. Drittanbieter</b>
 • <b>Telegram:</b> Empfängt deine Nachrichten technisch bedingt.
-• <b>KI-Provider (Mistral/OpenAI):</b> Empfängt anonymisierte Anfragen zur Verarbeitung.
+• <b>KI-Provider (Mistral/OpenAI):</b> Empfängt pseudonymisierte Anfragen (best-effort Redaction von sensiblen Daten) zur Verarbeitung.
 
 <b>4. Deine Rechte</b>
 Nutze /data für eine Übersicht, /export für deine Daten oder /delete zum Löschen.
@@ -146,6 +146,17 @@ async def handle_privacy_callbacks(update: Update, context: ContextTypes.DEFAULT
         if field in settings:
             settings[field] = not settings[field]
             await db.set_privacy_settings(user_id, settings)
+            
+            # Sofortige Bereinigung bei Opt-Out
+            if field == "allow_history" and not settings[field]:
+                await db.clear_history(user_id)
+            elif field == "allow_profile" and not settings[field]:
+                await db.upsert_user(user_id, "", "")
+                await db.clear_user_tokens(user_id)
+                await db.save_user_course_config(user_id, [])
+            elif field == "allow_telemetry" and not settings[field]:
+                await db.reset_user_requests(user_id)
+
             await query.answer(f"{field} geändert!")
             # Menü neu zeichnen
             await show_consent_menu(query, user_id)

@@ -18,3 +18,4 @@ Neue Sessions werden als `logs/YYYY-MM-DD.md` angelegt.
 1. Erstelle `.gemini/logs/YYYY-MM-DD.md`
 2. Trage den Link in diese Tabelle ein
 3. Protokolliere Tasks mit `## Task: <Name>` und `### Git` Abschnitt
+| 02.05.2026 | DSGVO-Compliance: Privacy-Settings durchsetzen | [2026-05-02.md](logs/2026-05-02.md) |

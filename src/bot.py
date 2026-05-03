@@ -87,6 +87,7 @@ _bot_messages: dict[int, list[int]] = {}
 _pending_confirmation: dict[int, tuple[str, str, int, str | None]] = {}
 _error_cache: dict[str, dict] = {}
 _bug_reports: dict[int, dict] = {} # user_id -> {state, title, context, comment}
+_pending_messages: dict[int, str] = {}
 
 _NEIN = {"nein", "ne", "n", "no", "falsch", "stimmt nicht", "stimmt nicht so", "nope"}
 _JA   = {"ja", "j", "yes", "y", "stimmt", "korrekt", "ok", "okay"}
@@ -420,6 +421,14 @@ async def _show_course_filter_options(query, user_id: int, key: str):
 async def cmd_bug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Startet den interaktiven Bug-Reporting-Prozess."""
     user_id = update.effective_user.id
+    privacy_settings = await db.get_privacy_settings(user_id)
+    if not privacy_settings.get("allow_error_reports", False):
+        await update.message.reply_text(
+            "⚠️ Du hast Fehlerberichte in deinen Datenschutzeinstellungen deaktiviert.\n"
+            "Bitte aktiviere 'Fehlerberichte' via /consent, um Feedback zu senden."
+        )
+        return
+
     _bug_reports[user_id] = {"state": "WAITING_FOR_TITLE"}
     await update.message.reply_text(
         "📝 *Feedback & Bug-Reporting*\n\n"
@@ -449,12 +458,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data == "privacy_opt_in":
         await db.set_consent_status(user_id, 1)
-        pending_msg = await db.get_and_clear_pending_message(user_id)
+        pending_msg = _pending_messages.pop(user_id, "")
         await query.edit_message_text("✅ Danke für deine Zustimmung! Ich verarbeite nun deine erste Anfrage...")
         if pending_msg:
             chat_id = update.effective_chat.id
             user = update.effective_user
-            asyncio.create_task(_process_user_message(update, context, chat_id, user_id, user, pending_msg))
+            privacy_settings = await db.get_privacy_settings(user_id)
+            asyncio.create_task(_process_user_message(update, context, chat_id, user_id, user, pending_msg, privacy_settings))
         return
 
     if data == "setc_abort":
@@ -511,7 +521,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     label = v.split(".")[-1] if "." in v else v
                     keyboard.append([InlineKeyboardButton(f"Gruppe {label}", callback_data=f"setc_addv:{v}")])
                 keyboard.append([InlineKeyboardButton("Nur Basis-Kurs (nicht empfohlen)", callback_data=f"setc_addv:{full_key}")])
-                keyboard.append([InlineKeyboardButton("⬅️ Zurück", callback_data=f"setc_more")])
+                keyboard.append([InlineKeyboardButton("⬅️ Zurück", callback_data="setc_more")])
                 
                 await query.edit_message_text(
                     f"Für *{full_key}* wurden verschiedene Gruppen gefunden.\nWelcher Gruppe gehörst du an?",
@@ -691,7 +701,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("⛔ Du bist nicht berechtigt, diesen Bot zu nutzen.")
         return
 
-    await db.upsert_user(user_id, user.username or "", user.first_name or "")
+    privacy_settings = await db.get_privacy_settings(user_id)
+
+    if privacy_settings.get("allow_profile", True):
+        await db.upsert_user(user_id, user.username or "", user.first_name or "")
 
     if not admin._is_admin(user_id) and await db.is_banned(user_id):
         await update.message.reply_text("⛔ Du wurdest gesperrt.")
@@ -699,7 +712,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     has_consented = await db.get_consent_status(user_id)
     if has_consented == 0:
-        await db.save_pending_message(user_id, text)
+        _pending_messages[user_id] = text
         keyboard = [
             [InlineKeyboardButton("✅ Ich stimme zu", callback_data="privacy_opt_in")],
             [InlineKeyboardButton("📄 Details lesen", callback_data="privacy_opt_in_details")]
@@ -711,9 +724,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    await _process_user_message(update, context, chat_id, user_id, user, text)
+    await _process_user_message(update, context, chat_id, user_id, user, text, privacy_settings)
 
-async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int, user, text: str) -> None:
+async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int, user, text: str, privacy_settings: dict | None = None) -> None:
+    if privacy_settings is None:
+        privacy_settings = await db.get_privacy_settings(user_id)
+
     if _maintenance[0] and not admin._is_admin(user_id):
         await update.effective_message.reply_text(_maintenance[1])
         return
@@ -795,7 +811,8 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
                 return
 
     user_label = f"@{user.username}" if user.username else str(user_id)
-    log.debug("Anfrage von %s (chat=%d): %.80s", user_label, chat_id, text)
+    redacted_text = privacy.redact_pii(text)
+    log.debug("Anfrage von %s (chat=%d): %.80s", user_label, chat_id, redacted_text)
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
     
     # Nutzer-Profil laden (für persönlichen Stundenplan)
@@ -840,8 +857,11 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
         if history and history[-1]["role"] == "assistant":
             history[-1]["content"] = reply
 
-        await db.save_history(chat_id, history)
-        await db.add_tokens(user_id, tok_in, tok_out)
+        if privacy_settings.get("allow_history", True):
+            await db.save_history(chat_id, history)
+        
+        if privacy_settings.get("allow_profile", True):
+            await db.add_tokens(user_id, tok_in, tok_out)
         
         # Sonderaktionen prüfen (z.B. Lageplan senden)
         map_sent = False

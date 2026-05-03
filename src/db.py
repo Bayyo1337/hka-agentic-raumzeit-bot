@@ -8,7 +8,7 @@ import logging
 import os
 import shutil
 import aiosqlite
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 log = logging.getLogger(__name__)
 
@@ -183,6 +183,10 @@ async def init() -> None:
 # ── Rate Limiting (TELEMETRY_DB) ─────────────────────────────────────────────
 
 async def check_rate_limit(user_id: int, limit: int) -> bool:
+    settings = await get_privacy_settings(user_id)
+    if not settings.get("allow_telemetry", True):
+        return True
+
     if limit == 0:
         await _log_request(user_id)
         return True
@@ -209,6 +213,10 @@ async def check_rate_limit(user_id: int, limit: int) -> bool:
 
 
 async def _log_request(user_id: int) -> None:
+    settings = await get_privacy_settings(user_id)
+    if not settings.get("allow_telemetry", True):
+        return
+        
     async with aiosqlite.connect(TELEMETRY_DB) as db:
         await db.execute(
             "INSERT INTO requests (user_id, ts) VALUES (?, ?)",
@@ -287,6 +295,18 @@ async def get_all_tokens() -> dict[int, tuple[int, int]]:
         async with db.execute("SELECT user_id, input_total, output_total FROM tokens") as cur:
             rows = await cur.fetchall()
     return {r[0]: (r[1], r[2]) for r in rows}
+
+
+async def clear_user_tokens(user_id: int) -> None:
+    async with aiosqlite.connect(STATE_DB) as db:
+        await db.execute("DELETE FROM tokens WHERE user_id=?", (user_id,))
+        await db.commit()
+
+
+async def reset_user_requests(user_id: int) -> None:
+    async with aiosqlite.connect(TELEMETRY_DB) as db:
+        await db.execute("DELETE FROM requests WHERE user_id=?", (user_id,))
+        await db.commit()
 
 
 # ── Kurs-Index (CACHE_DB) ────────────────────────────────────────────────────
