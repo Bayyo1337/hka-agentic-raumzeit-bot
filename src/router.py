@@ -3,6 +3,7 @@ import re
 from typing import Literal, Dict, Any, Optional
 from pydantic import BaseModel, Field
 import litellm
+from src import admin
 
 log = logging.getLogger(__name__)
 
@@ -145,9 +146,10 @@ Beispiele:
 
     async def _log_fallback(self, text: str, user_context: dict, result: RouterOutput) -> None:
         try:
-            from src import admin
-            user_id = int(user_context.get("user_id") or 0)
-            chat_id = int(user_context.get("chat_id") or 0)
+            user_id_val = user_context.get("user_id")
+            user_id = int(user_id_val) if user_id_val is not None else 0
+            chat_id_val = user_context.get("chat_id")
+            chat_id = int(chat_id_val) if chat_id_val is not None else 0
             user_info = user_context.get("user_label") or str(user_id or chat_id)
             primary_course = user_context.get("primary_course")
             await admin.save_router_fallback(

@@ -13,6 +13,7 @@ from src.config import settings
 from src import agent
 from src import tools as raumzeit
 from src import db
+from src import privacy
 
 log = logging.getLogger(__name__)
 
@@ -491,8 +492,6 @@ async def save_router_fallback(
     router_result: dict | None = None,
 ) -> str:
     """Speichert Router-Fallback-Inputs als JSON in data/feedback/."""
-    from src import privacy
-
     if user_id > 0:
         privacy_settings = await db.get_privacy_settings(user_id)
         if not privacy_settings.get("allow_error_reports", False):
@@ -514,7 +513,6 @@ async def save_router_fallback(
 
 async def save_user_issue(title: str, context_cmd: str, comment: str, user_info: str) -> str:
     """Speichert ein vom Nutzer gemeldetes Feedback als JSON in data/feedback/."""
-    from src import privacy
     user_id = _extract_user_id(user_info)
 
     report_uid = user_id
