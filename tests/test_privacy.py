@@ -361,7 +361,8 @@ async def test_consent_gate_no_profile_before_opt_in():
     assert profile["username"] == "consented_user"
     assert profile["first_name"] == "Consented"
 
-def test_logging_anonymization(caplog):
+@pytest.mark.asyncio
+async def test_logging_anonymization(caplog):
     from src import privacy
     caplog.set_level(logging.INFO, logger="src.privacy")
     anon = privacy.anonymize_user_id(123456)
