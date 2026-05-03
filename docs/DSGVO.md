@@ -13,13 +13,15 @@ Wir speichern nur Daten, die technisch notwendig sind, um dir die Funktionen des
 
 | Datentyp | Speicherort | Zweck | Aufbewahrung (Standard) |
 | :--- | :--- | :--- | :--- |
-| Telegram ID | `state.db` | Eindeutige Identifizierung | Bis zur Löschung |
-| Vorname / Nutzername | `state.db` | Personalisierte Ansprache | Bis zur Löschung |
-| Gewählte Kurse | `state.db` | `/myplan` Personalisierung | Bis zur Löschung |
-| Chat-Historie | `state.db` | KI-Kontext (Verständnis) | 7 Tage (einstellbar) |
-| Token-Verbrauch | `state.db` | Nutzungsstatistik | Bis zur Löschung |
-| Zeitstempel Anfragen | `telemetry.db`| Rate-Limiting / Missbrauchsschutz | 24 Stunden (einstellbar) |
-| Fehlerberichte (JSON) | `data/feedback/`| Fehlerbehebung | 30 Tage (einstellbar) |
+| Telegram ID | `data/state.db` | Eindeutige Identifizierung | Bis zur Löschung |
+| Vorname / Nutzername | `data/state.db` | Personalisierte Ansprache | Bis zur Löschung |
+| Gewählte Kurse | `data/state.db` | `/myplan` Personalisierung | Bis zur Löschung |
+| Chat-Historie | `data/state.db` | KI-Kontext (Verständnis) | 7 Tage (einstellbar) |
+| Token-Verbrauch | `data/state.db` | Nutzungsstatistik | Bis zur Löschung |
+| Plan-Cache | `data/cache.db` | Performance (kurzfristige Zwischenspeicherung) | 4 Stunden (einstellbar) |
+| Zeitstempel Anfragen | `data/telemetry.db` | Rate-Limiting / Missbrauchsschutz | 24 Stunden (einstellbar) |
+| Feedback/Fehlerberichte (JSON) | `data/feedback/` | Fehlerbehebung | 30 Tage (einstellbar) |
+| Log-Dateien | `logs/bot.txt` | Betrieb & Debugging | Rotation (max. 4 Dateien à 5MB) |
 
 ## 3. Datenverarbeitung durch KI-Modelle
 Wenn du eine natürliche Frage stellst, senden wir den Text an einen KI-Provider (z.B. Mistral AI oder OpenAI).

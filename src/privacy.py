@@ -6,6 +6,7 @@ Implementiert Nutzer-Steuerung über Datenexport, Löschung und Privacy-Einstell
 import json
 import logging
 import re
+import hashlib
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler
@@ -26,9 +27,14 @@ Deine Daten gehören dir. Hier ist eine Übersicht, was dieser Bot speichert und
 • <b>Verlauf:</b> Die letzten Chat-Nachrichten (für Kontext-Verständnis der KI).
 • <b>Nutzung:</b> Zeitpunkte deiner Anfragen (für Rate-Limiting).
 • <b>Tokens:</b> Zähler der verbrauchten KI-Einheiten.
+• <b>Plan-Cache:</b> Kurzfristige Stundenplan-Zwischenspeicherung (Performance).
+• <b>Feedback:</b> Fehlerberichte/Feedback als JSON-Dateien.
+• <b>Logs:</b> Technische Logdateien (rotierend, ohne Klartext-Nachrichten auf INFO).
 
 <b>2. Wo liegen die Daten?</b>
-• Alle Daten liegen in geschützten SQLite-Datenbanken auf einem privaten Server. Der Zugriff ist auf die Bot-Instanz beschränkt.
+• SQLite-Datenbanken: <code>data/state.db</code>, <code>data/cache.db</code>, <code>data/telemetry.db</code>.
+• Feedback-Dateien: <code>data/feedback/</code> (JSON).
+• Logdateien: <code>logs/bot.txt</code> (rotierend, Debug kann redaktionierte Inhalte enthalten).
 • Es findet <u>kein</u> Tracking durch Drittanbieter statt (außer Telegram selbst).
 
 <b>3. Drittanbieter</b>
@@ -133,7 +139,7 @@ async def handle_privacy_callbacks(update: Update, context: ContextTypes.DEFAULT
     if data == "privacy_delete_confirm":
         await db.delete_user_data(user_id)
         await query.edit_message_text("🗑 <b>Erfolgreich gelöscht.</b> Alle deine Daten wurden aus dem System entfernt.", parse_mode="HTML")
-        log.info("User %d deleted their data via /delete", user_id)
+        log.info("User %s deleted their data via /delete", anonymize_user_id(user_id))
         return
 
     if data == "privacy_delete_cancel":
@@ -243,6 +249,12 @@ def register_handlers(app):
     # Callbacks
     app.add_handler(CallbackQueryHandler(handle_privacy_callbacks, pattern="^privacy_(delete|toggle)_"))
     app.add_handler(CallbackQueryHandler(handle_retention_presets, pattern="^privacy_preset_"))
+
+def anonymize_user_id(user_id: int | None) -> str:
+    if user_id is None:
+        return "user:unknown"
+    digest = hashlib.sha256(str(user_id).encode("utf-8")).hexdigest()[:8]
+    return f"user:{digest}"
 
 def redact_pii(text: str) -> str:
     """

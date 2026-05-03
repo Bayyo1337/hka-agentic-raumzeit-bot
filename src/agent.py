@@ -277,7 +277,8 @@ async def run(user_message: str, history: list[dict], user_id: int | None = None
         messages.append({"role": "user", "content": safe_message})
 
     # Hardened Logging
-    log.info("LLM Request for %s (Intent: %s)", user_label or f"User:{user_id}", intent)
+    safe_label = privacy.anonymize_user_id(user_id)
+    log.info("LLM Request for %s (Intent: %s)", safe_label, intent)
     if getattr(settings, "debug", False) and os.environ.get("ALLOW_PII_DEBUG_LOGS") == "1":
         log.debug("FULL PROMPT (PII ENABLED):\n%s", json.dumps(messages, indent=2, ensure_ascii=False))
     else:

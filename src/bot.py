@@ -460,6 +460,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await db.set_consent_status(user_id, 1)
         pending_msg = _pending_messages.pop(user_id, "")
         await query.edit_message_text("✅ Danke für deine Zustimmung! Ich verarbeite nun deine erste Anfrage...")
+        privacy_settings = await db.get_privacy_settings(user_id)
+        if privacy_settings.get("allow_profile", True):
+            user = update.effective_user
+            await db.upsert_user(user_id, user.username or "", user.first_name or "")
         if pending_msg:
             chat_id = update.effective_chat.id
             user = update.effective_user
@@ -701,10 +705,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("⛔ Du bist nicht berechtigt, diesen Bot zu nutzen.")
         return
 
+    await db.ensure_user_record(user_id)
     privacy_settings = await db.get_privacy_settings(user_id)
-
-    if privacy_settings.get("allow_profile", True):
-        await db.upsert_user(user_id, user.username or "", user.first_name or "")
 
     if not admin._is_admin(user_id) and await db.is_banned(user_id):
         await update.message.reply_text("⛔ Du wurdest gesperrt.")
@@ -723,6 +725,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             parse_mode="Markdown"
         )
         return
+
+    if privacy_settings.get("allow_profile", True):
+        await db.upsert_user(user_id, user.username or "", user.first_name or "")
 
     await _process_user_message(update, context, chat_id, user_id, user, text, privacy_settings)
 
@@ -810,7 +815,7 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
                 await update.effective_message.reply_text("😕 Keine Daten gefunden. Deine Anfrage wurde für manuelle Prüfung gespeichert.")
                 return
 
-    user_label = f"@{user.username}" if user.username else str(user_id)
+    user_label = privacy.anonymize_user_id(user_id)
     redacted_text = privacy.redact_pii(text)
     log.debug("Anfrage von %s (chat=%d): %.80s", user_label, chat_id, redacted_text)
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
@@ -1160,4 +1165,3 @@ def main():
     except (KeyboardInterrupt, SystemExit): pass
 
 if __name__ == "__main__": main()
-

@@ -90,6 +90,7 @@ Die Konfiguration erfolgt über die `.env` Datei.
 Deine Privatsphäre ist uns wichtig. Der Bot implementiert:
 - **Datenminimierung**: Es wird nur gespeichert, was für die Funktion nötig ist.
 - **Kontrolle**: Mit `/data`, `/export` und `/delete` behältst du die volle Kontrolle über deine Daten.
+- **Aufbewahrung**: Individuelle Retention-Settings via `/retention`.
 - **Transparenz**: Alle Speicherorte und Zwecke sind in der [Datenschutzerklärung](docs/DSGVO.md) dokumentiert.
 - **PII-Redaktion**: "Best-Effort" Schwärzung von E-Mails, Telefonnummern und IBANs vor der KI-Verarbeitung oder Log-Speicherung.
 - **Telemetrie-Opt-Out**: Vollständiger Bypass des Rate-Limitings und der Telemetrie-Speicherung bei Widerspruch.
@@ -103,6 +104,7 @@ Deine Privatsphäre ist uns wichtig. Der Bot implementiert:
 - `/help`: Detaillierte Hilfe und Beispielfragen.
 - `/privacy`: Datenschutz-Informationen und Link zur DSGVO-Erklärung.
 - `/consent`: Verwalte deine Privacy-Einstellungen (Was darf gespeichert werden?).
+- `/retention`: Lege individuelle Aufbewahrungsfristen fest.
 - `/data`: Zeigt alle über dich gespeicherten Daten an.
 - `/export`: Exportiert deine Daten als JSON-Datei.
 - `/delete`: Löscht alle deine personenbezogenen Daten unwiderruflich.

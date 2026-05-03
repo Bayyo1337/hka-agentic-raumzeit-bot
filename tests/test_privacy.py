@@ -2,6 +2,7 @@ import pytest
 import json
 import os
 import shutil
+import logging
 import pytest_asyncio
 from datetime import datetime, timedelta
 from src import db
@@ -345,3 +346,24 @@ async def test_opt_in_gatekeeper_db():
     # Assert message is cleared
     cleared_msg = await db.get_and_clear_pending_message(user_id)
     assert cleared_msg == ""
+
+@pytest.mark.asyncio
+async def test_consent_gate_no_profile_before_opt_in():
+    user_id = 22222
+    await db.set_consent_status(user_id, 0)
+    profile = await db.get_user(user_id)
+    assert profile["username"] == ""
+    assert profile["first_name"] == ""
+    assert await db.get_consent_status(user_id) == 0
+
+    await db.upsert_user(user_id, "consented_user", "Consented")
+    profile = await db.get_user(user_id)
+    assert profile["username"] == "consented_user"
+    assert profile["first_name"] == "Consented"
+
+def test_logging_anonymization(caplog):
+    from src import privacy
+    caplog.set_level(logging.INFO, logger="src.privacy")
+    privacy.log.info("User %s deleted their data via /delete", privacy.anonymize_user_id(123456))
+    assert "123456" not in caplog.text
+    assert "@testuser" not in caplog.text

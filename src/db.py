@@ -708,9 +708,14 @@ async def get_consent_status(user_id: int) -> int:
 async def set_consent_status(user_id: int, status: int) -> None:
     try:
         async with aiosqlite.connect(STATE_DB) as db:
-            await db.execute(
-                "UPDATE users SET has_consented=? WHERE user_id=?", (status, user_id)
-            )
+            now = datetime.now().isoformat()
+            await db.execute("""
+                INSERT INTO users (user_id, username, first_name, last_seen, has_consented)
+                VALUES (?, '', '', ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    has_consented = excluded.has_consented,
+                    last_seen = excluded.last_seen
+            """, (user_id, now, status))
             await db.commit()
     except Exception as e:
         log.error("Error in set_consent_status: %s", e)
@@ -718,9 +723,14 @@ async def set_consent_status(user_id: int, status: int) -> None:
 async def save_pending_message(user_id: int, msg: str) -> None:
     try:
         async with aiosqlite.connect(STATE_DB) as db:
-            await db.execute(
-                "UPDATE users SET pending_message=? WHERE user_id=?", (msg, user_id)
-            )
+            now = datetime.now().isoformat()
+            await db.execute("""
+                INSERT INTO users (user_id, username, first_name, last_seen, pending_message)
+                VALUES (?, '', '', ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    pending_message = excluded.pending_message,
+                    last_seen = excluded.last_seen
+            """, (user_id, now, msg))
             await db.commit()
     except Exception as e:
         log.error("Error in save_pending_message: %s", e)
@@ -743,6 +753,16 @@ async def get_and_clear_pending_message(user_id: int) -> str:
     except Exception as e:
         log.error("Error in get_and_clear_pending_message: %s", e)
         return ""
+
+async def ensure_user_record(user_id: int) -> None:
+    async with aiosqlite.connect(STATE_DB) as db:
+        await db.execute("""
+            INSERT INTO users (user_id, username, first_name, last_seen)
+            VALUES (?, '', '', ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                last_seen = excluded.last_seen
+        """, (user_id, datetime.now().isoformat()))
+        await db.commit()
 
 async def upsert_user(user_id: int, username: str, first_name: str) -> None:
     async with aiosqlite.connect(STATE_DB) as db:
