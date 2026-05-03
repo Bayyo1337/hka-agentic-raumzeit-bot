@@ -253,10 +253,10 @@ def register_handlers(app):
     app.add_handler(CallbackQueryHandler(handle_retention_presets, pattern="^privacy_preset_"))
 
 def anonymize_user_id(user_id: int | None) -> str:
-    """Return a stable SHA256 prefix label for logs without exposing the raw ID."""
+    """Return a stable 12-char SHA256 prefix label for logs without exposing the raw ID."""
     if user_id is None:
         return "user:unknown"
-    digest = hashlib.sha256(str(user_id).encode("utf-8")).hexdigest()[:8]
+    digest = hashlib.sha256(str(user_id).encode("utf-8")).hexdigest()[:12]
     return f"user:{digest}"
 
 def redact_pii(text: str) -> str:

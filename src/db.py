@@ -725,7 +725,8 @@ _USER_UPSERT_SQL = {
 async def _upsert_user_field(user_id: int, field: str, value) -> None:
     sql = _USER_UPSERT_SQL.get(field)
     if not sql:
-        raise ValueError(f"Unsupported user field: {field}")
+        supported = ", ".join(_USER_UPSERT_SQL.keys())
+        raise ValueError(f"Unsupported user field: {field}. Supported fields are: {supported}")
     now = datetime.now().isoformat()
     async with aiosqlite.connect(STATE_DB) as db:
         await db.execute(sql, (user_id, now, value))

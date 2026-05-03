@@ -352,6 +352,7 @@ async def test_consent_gate_no_profile_before_opt_in():
     user_id = 22222
     await db.set_consent_status(user_id, 0)
     profile = await db.get_user(user_id)
+    assert profile is not None
     assert profile["username"] == ""
     assert profile["first_name"] == ""
     assert await db.get_consent_status(user_id) == 0

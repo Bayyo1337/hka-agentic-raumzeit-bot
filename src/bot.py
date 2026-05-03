@@ -815,9 +815,9 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
                 await update.effective_message.reply_text("😕 Keine Daten gefunden. Deine Anfrage wurde für manuelle Prüfung gespeichert.")
                 return
 
-    user_label = privacy.anonymize_user_id(user_id)
+    anon_user_label = privacy.anonymize_user_id(user_id)
     redacted_text = privacy.redact_pii(text)
-    log.debug("Anfrage von %s (chat=%d): %.80s", user_label, chat_id, redacted_text)
+    log.debug("Anfrage von %s (chat=%d): %.80s", anon_user_label, chat_id, redacted_text)
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
     
     # Nutzer-Profil laden (für persönlichen Stundenplan)
@@ -849,7 +849,7 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
                 log.warning("Router Failed: %s", router_exc)
 
         reply, tok_in, tok_out, collected_results = await agent.run(
-            text, history, user_id=user_id, user_label=user_label, primary_course=primary_course, intent=intent
+            text, history, user_id=user_id, user_label=anon_user_label, primary_course=primary_course, intent=intent
         )
         # Heuristik: Ist es eine persönliche Anfrage?
         is_personal = any(kw in text.lower() for kw in ["mein", "ich", "heute", "morgen", "nächste woche"]) and primary_course is not None
