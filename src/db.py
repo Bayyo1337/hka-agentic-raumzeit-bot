@@ -705,18 +705,30 @@ async def get_consent_status(user_id: int) -> int:
         log.error("Error in get_consent_status: %s", e)
         return 0
 
+_USER_UPSERT_SQL = {
+    "has_consented": """
+        INSERT INTO users (user_id, username, first_name, last_seen, has_consented)
+        VALUES (?, '', '', ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            has_consented = excluded.has_consented,
+            last_seen = excluded.last_seen
+    """,
+    "pending_message": """
+        INSERT INTO users (user_id, username, first_name, last_seen, pending_message)
+        VALUES (?, '', '', ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            pending_message = excluded.pending_message,
+            last_seen = excluded.last_seen
+    """,
+}
+
 async def _upsert_user_field(user_id: int, field: str, value) -> None:
-    if field not in {"has_consented", "pending_message"}:
+    sql = _USER_UPSERT_SQL.get(field)
+    if not sql:
         raise ValueError(f"Unsupported user field: {field}")
     now = datetime.now().isoformat()
     async with aiosqlite.connect(STATE_DB) as db:
-        await db.execute(f"""
-            INSERT INTO users (user_id, username, first_name, last_seen, {field})
-            VALUES (?, '', '', ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                {field} = excluded.{field},
-                last_seen = excluded.last_seen
-        """, (user_id, now, value))
+        await db.execute(sql, (user_id, now, value))
         await db.commit()
 
 async def set_consent_status(user_id: int, status: int) -> None:

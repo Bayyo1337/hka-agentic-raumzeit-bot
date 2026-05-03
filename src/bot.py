@@ -120,6 +120,10 @@ _ADMIN_COMMANDS = _USER_COMMANDS + [
 def _is_allowed(user_id: int) -> bool:
     return not settings.allowed_ids or user_id in settings.allowed_ids
 
+async def _maybe_store_profile(user_id: int, user, privacy_settings: dict) -> None:
+    if privacy_settings.get("allow_profile", True):
+        await db.upsert_user(user_id, user.username or "", user.first_name or "")
+
 def build_optin_text() -> str:
     """Erzeugt den Text für die DSGVO-Zustimmung."""
     return (
@@ -461,9 +465,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         pending_msg = _pending_messages.pop(user_id, "")
         await query.edit_message_text("✅ Danke für deine Zustimmung! Ich verarbeite nun deine erste Anfrage...")
         privacy_settings = await db.get_privacy_settings(user_id)
-        if privacy_settings.get("allow_profile", True):
-            user = update.effective_user
-            await db.upsert_user(user_id, user.username or "", user.first_name or "")
+        await _maybe_store_profile(user_id, update.effective_user, privacy_settings)
         if pending_msg:
             chat_id = update.effective_chat.id
             user = update.effective_user
@@ -725,8 +727,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    if privacy_settings.get("allow_profile", True):
-        await db.upsert_user(user_id, user.username or "", user.first_name or "")
+    await _maybe_store_profile(user_id, user, privacy_settings)
 
     await _process_user_message(update, context, chat_id, user_id, user, text, privacy_settings)
 
