@@ -92,8 +92,9 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             effective_limit = u["custom_rate_limit"] if u["custom_rate_limit"] >= 0 else global_limit
             
             ban_flag = " 🚫" if u["banned"] else ""
+            hka_flag = " 🎓" if u.get("is_hka_member") else ""
             lines.append(
-                f"• {name} ({uid}){ban_flag} "
+                f"• {name} ({uid}){ban_flag}{hka_flag} "
                 f"[`{recent}/{effective_limit if effective_limit else '∞'}`] | "
                 f"`{total}` ges. | `{tok:,}` tok"
             )
@@ -106,12 +107,16 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "🛠 *Schnellaktionen:*",
         "• `/sync [all|courses|lecturers]` – Datenabgleich",
         "• `/user [@username|ID]` – Nutzer-Details & Limits",
+        "• `/approve [@username|ID]` – Als HKA-Mitglied (🎓) freischalten",
+        "• `/revoke [@username|ID]` – HKA-Zugang entziehen",
         "• `/broadcast [Text]` – Rundnachricht an ALLE",
         "• `/loglevel [DEBUG|INFO|WARNING]` – Log-Tiefe",
         "• `/maintenance [on|off]` – Wartungsmodus",
         "• `/togglepersonal` – Feature Personalisierung",
         "• `/togglemap` – Feature Karten",
         "• `/ping` – API-Status prüfen",
+        "",
+        "_Legende: 🚫 = gesperrt | 🎓 = HKA-Mitglied (Dozenten-Zugriff)_",
     ]
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
@@ -231,16 +236,25 @@ async def cmd_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     name = escape_markdown(name, version=1)
     custom_limit = u["custom_rate_limit"] if u else -1
     effective_limit = custom_limit if custom_limit >= 0 else settings.rate_limit_per_hour
+    hka_status = "🎓 HKA-Mitglied" if u and u["is_hka_member"] else "👤 Extern"
     lines = [
-        f"👤 {name} (ID: {uid})",
-        f"Status: {'🚫 Gesperrt' if u and u['banned'] else '✅ Aktiv'}",
+        f"👤 {name} (ID: `{uid}`)",
+        f"Status: {'🚫 Gesperrt' if u and u['banned'] else '✅ Aktiv'} | {hka_status}",
         f"Zuletzt gesehen: {u['last_seen'][:16] if u and u['last_seen'] else 'unbekannt'}",
         f"Rate-Limit: {effective_limit}/h{' (custom)' if custom_limit >= 0 else ''}",
         f"Anfragen: {recent}/h  |  {total} gesamt",
         f"Tokens: {tok_in + tok_out:,} (↑{tok_in:,} / ↓{tok_out:,})",
         f"History-Einträge: {len(history) // 2}",
     ]
-    await update.message.reply_text("\n".join(lines))
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    toggle_label = "❌ HKA-Zugang entziehen" if (u and u["is_hka_member"]) else "🎓 Als HKA-Mitglied freischalten"
+    toggle_cb = f"hka_revoke:{uid}" if (u and u["is_hka_member"]) else f"hka_approve:{uid}"
+    keyboard = [[InlineKeyboardButton(toggle_label, callback_data=toggle_cb)]]
+    await update.message.reply_text(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
 
 
 @_require_admin
@@ -507,3 +521,29 @@ async def save_user_issue(title: str, context_cmd: str, comment: str, user_info:
         "anonymized": anonymized
     }
     return await db.save_feedback_json(data)
+
+
+@_require_admin
+async def cmd_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text("Verwendung: /approve <user_id oder @username>")
+        return
+    uid = await _resolve_target(context.args[0])
+    if uid is None:
+        await update.message.reply_text("❌ Nutzer nicht gefunden.")
+        return
+    await db.set_hka_member(uid, True)
+    await update.message.reply_text(f"🎓 Nutzer {uid} als HKA-Mitglied freigeschalten.")
+
+
+@_require_admin
+async def cmd_revoke(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text("Verwendung: /revoke <user_id oder @username>")
+        return
+    uid = await _resolve_target(context.args[0])
+    if uid is None:
+        await update.message.reply_text("❌ Nutzer nicht gefunden.")
+        return
+    await db.set_hka_member(uid, False)
+    await update.message.reply_text(f"👤 HKA-Zugang für Nutzer {uid} entzogen.")

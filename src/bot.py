@@ -110,6 +110,8 @@ _USER_COMMANDS = [
 _ADMIN_COMMANDS = _USER_COMMANDS + [
     BotCommand("admin", "System- & Nutzerübersicht"),
     BotCommand("sync", "Datenbank-Abgleich mit HKA"),
+    BotCommand("approve", "Nutzer als HKA-Mitglied freischalten"),
+    BotCommand("revoke", "HKA-Zugang entziehen"),
     BotCommand("togglepersonal", "Feature: Personalisierung umschalten"),
     BotCommand("togglemap", "Feature: Lageplan umschalten"),
     BotCommand("loglevel", "Logging-Detailtiefe ändern"),
@@ -217,6 +219,9 @@ def build_help_text(is_admin: bool) -> str:
             "🔧 *Admin-Bereich:*",
             "`/admin` – System-Dashboard & Nutzer-Statistik",
             "`/sync [all|courses|lecturers]` – Daten manuell abgleichen",
+            "`/user [@username|ID]` – Nutzer-Details & HKA-Freischaltung",
+            "`/approve [@username|ID]` – Als HKA-Mitglied freischalten (🎓 Dozenten-Zugriff)",
+            "`/revoke [@username|ID]` – HKA-Zugang entziehen",
             "`/broadcast [Text]` – Nachricht an alle Nutzer senden",
             "`/loglevel [DEBUG|INFO|WARNING]` – Detailtiefe der Logs ändern",
             "`/maintenance [An|Aus]` – Wartungsmodus (de)aktivieren",
@@ -627,6 +632,50 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             parse_mode="Markdown"
         )
 
+    elif data.startswith("hka_approve:") or data.startswith("hka_revoke:"):
+        if not admin._is_admin(user_id):
+            await query.answer("⛔ Nur für Admins.")
+            return
+        action, target_str = data.split(":", 1)
+        try:
+            target_uid = int(target_str)
+        except ValueError:
+            await query.answer("❌ Ungültige User-ID.")
+            return
+        is_approve = action == "hka_approve"
+        await db.set_hka_member(target_uid, is_approve)
+        status = "🎓 HKA-Zugang freigeschalten" if is_approve else "👤 HKA-Zugang entzogen"
+        await query.answer(status)
+        # Refresh the /user detail view inline
+        u = await db.get_user(target_uid)
+        tok_in, tok_out = await db.get_tokens(target_uid)
+        recent = await db.get_recent_count(target_uid)
+        total = await db.get_total_count(target_uid)
+        name = f"@{u['username']}" if u and u["username"] else (u["first_name"] if u else str(target_uid))
+        name = escape_markdown(name, version=1)
+        custom_limit = u["custom_rate_limit"] if u else -1
+        effective_limit = custom_limit if custom_limit >= 0 else settings.rate_limit_per_hour
+        hka_status = "🎓 HKA-Mitglied" if u and u["is_hka_member"] else "👤 Extern"
+        lines = [
+            f"👤 {name} (ID: `{target_uid}`)",
+            f"Status: {'🚫 Gesperrt' if u and u['banned'] else '✅ Aktiv'} | {hka_status}",
+            f"Zuletzt gesehen: {u['last_seen'][:16] if u and u['last_seen'] else 'unbekannt'}",
+            f"Rate-Limit: {effective_limit}/h{' (custom)' if custom_limit >= 0 else ''}",
+            f"Anfragen: {recent}/h  |  {total} gesamt",
+            f"Tokens: {tok_in + tok_out:,} (↑{tok_in:,} / ↓{tok_out:,})",
+        ]
+        toggle_label = "❌ HKA-Zugang entziehen" if (u and u["is_hka_member"]) else "🎓 Als HKA-Mitglied freischalten"
+        toggle_cb = f"hka_revoke:{target_uid}" if (u and u["is_hka_member"]) else f"hka_approve:{target_uid}"
+        keyboard = [[InlineKeyboardButton(toggle_label, callback_data=toggle_cb)]]
+        try:
+            await query.edit_message_text(
+                "\n".join(lines),
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+
 
 async def cmd_mensa(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Shortcut-Befehl für den heutigen Mensa-Speiseplan."""
@@ -815,9 +864,10 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     log.debug("Anfrage von %s (chat=%d): %.80s", user_label, chat_id, redacted_text)
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
     
-    # Nutzer-Profil laden (für persönlichen Stundenplan)
+    # Nutzer-Profil laden (für persönlichen Stundenplan + HKA-Zugriff)
     u = await db.get_user(user_id)
     primary_course = u.get("primary_course") if u else None
+    has_raumzeit_access = bool(u.get("is_hka_member")) if u else False
 
     history = await db.load_history(chat_id)
     try:
@@ -844,7 +894,8 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
                 log.warning("Router Failed: %s", router_exc)
 
         reply, tok_in, tok_out, collected_results = await agent.run(
-            text, history, user_id=user_id, user_label=user_label, primary_course=primary_course, intent=intent
+            text, history, user_id=user_id, user_label=user_label, primary_course=primary_course, intent=intent,
+            has_raumzeit_access=has_raumzeit_access
         )
         # Heuristik: Ist es eine persönliche Anfrage?
         is_personal = any(kw in text.lower() for kw in ["mein", "ich", "heute", "morgen", "nächste woche"]) and primary_course is not None
@@ -1097,6 +1148,8 @@ async def main_async() -> None:
     app.add_handler(CommandHandler("user", admin.cmd_user))
     app.add_handler(CommandHandler("ban", admin.cmd_ban))
     app.add_handler(CommandHandler("unban", admin.cmd_unban))
+    app.add_handler(CommandHandler("approve", admin.cmd_approve))
+    app.add_handler(CommandHandler("revoke", admin.cmd_revoke))
     app.add_handler(CommandHandler("resetlimit", admin.cmd_resetlimit))
     app.add_handler(CommandHandler("setlimit", admin.cmd_setlimit))
     app.add_handler(CommandHandler("cleartokens", admin.cmd_cleartokens))

@@ -648,6 +648,15 @@ def _filter_bookings(bookings: list[dict], user_config: list[dict]) -> list[dict
 def format_results(collected: list[tuple[str, dict]], user_message: str, user_config: list[dict] = None, is_personal: bool = False) -> str:
     if not collected:
         return "Ich konnte keine Daten abrufen. Bitte versuche es erneut."
+
+    # Check for HKA access denial
+    for name, result in collected:
+        if isinstance(result, dict) and result.get("error") == "hka_access_required":
+            return (
+                "🔒 *Kein Zugriff*\n\n"
+                "Diese Information (Dozenten-Stundenplan / Kontaktdaten) ist nur für HKA-Angehörige verfügbar.\n"
+                "Bitte wende dich an einen Administrator, um deinen Zugang freischalten zu lassen."
+            )
     
     # Handle multiple course timetable calls (Personal Plan)
     course_calls = [(n, r) for n, r in collected if n == "get_course_timetable"]
