@@ -103,6 +103,9 @@ ALL_TOOLS_DEF = {
     "get_campus_map": "get_campus_map: room_or_building (z.B. \"LI-145\" oder \"Gebäude M\") - NUTZE DIES NUR BEI FRAGEN NACH DEM ORT/STOCKWERK!"
 }
 
+# Tools that require authenticated HKA Raumzeit access (private API + lecturer data)
+_PRIVATE_TOOLS: frozenset[str] = frozenset({"get_lecturer_timetable", "get_lecturer_info"})
+
 
 def resolve_german_weekday(text: str, ref_date: date) -> date | None:
     """Extrahiert einen deutschen Wochentag aus Text und gibt das nächste Datum ab ref_date zurück."""
@@ -141,10 +144,13 @@ def filter_history_by_intent(history: list[dict], intent: str) -> list[dict]:
     return filtered
 
 
-def _extraction_prompt(primary_course: Optional[str] = None, intent: str = "smalltalk_fallback") -> str:
+def _extraction_prompt(primary_course: Optional[str] = None, intent: str = "smalltalk_fallback", has_raumzeit_access: bool = True) -> str:
     config = INTENT_CONFIGS.get(intent, INTENT_CONFIGS["smalltalk_fallback"])
     instruction = config["instruction"]
     allowed_tools = config["tools"]
+
+    if not has_raumzeit_access:
+        allowed_tools = [t for t in allowed_tools if t not in _PRIVATE_TOOLS]
     
     tools_str = "\n".join(f"- {ALL_TOOLS_DEF[t]}" for t in allowed_tools if t in ALL_TOOLS_DEF)
     
@@ -226,7 +232,7 @@ MAX_HISTORY_EXCHANGES = 3
 
 MAX_TOOL_CALLS = 6
 
-async def run(user_message: str, history: list[dict], user_id: int | None = None, user_label: str = "", primary_course: str | None = None, intent: str = "smalltalk_fallback") -> tuple[str, int, int, list]:
+async def run(user_message: str, history: list[dict], user_id: int | None = None, user_label: str = "", primary_course: str | None = None, intent: str = "smalltalk_fallback", has_raumzeit_access: bool = True) -> tuple[str, int, int, list]:
     # 1. Privacy Settings laden
     from src import db
     privacy_settings = {"allow_history": 1, "allow_llm": 1}
@@ -264,7 +270,7 @@ async def run(user_message: str, history: list[dict], user_id: int | None = None
 
     model = _resolve_model()
     # System Prompt mit aktuellem Profil
-    sys_prompt = _extraction_prompt(primary_course, intent)
+    sys_prompt = _extraction_prompt(primary_course, intent, has_raumzeit_access)
     messages = [{"role": "system", "content": sys_prompt}]
     
     if processed_history:
@@ -339,6 +345,8 @@ async def run(user_message: str, history: list[dict], user_id: int | None = None
     async def _execute(call: dict) -> tuple[str, dict]:
         name = call.get("tool", "")
         args = call.get("args", {})
+        if not has_raumzeit_access and name in _PRIVATE_TOOLS:
+            return name, {"error": "hka_access_required"}
         if user_id:
             args["user_id"] = user_id
         handler = TOOL_HANDLERS.get(name)

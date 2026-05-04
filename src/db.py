@@ -53,7 +53,8 @@ async def init() -> None:
                 pending_intent    TEXT,
                 missing_entities  TEXT,
                 has_consented     INTEGER NOT NULL DEFAULT 0,
-                pending_message   TEXT NOT NULL DEFAULT ''
+                pending_message   TEXT NOT NULL DEFAULT '',
+                is_hka_member     INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS tokens (
                 user_id      INTEGER PRIMARY KEY,
@@ -125,6 +126,11 @@ async def init() -> None:
         except Exception as e:
             if "duplicate column name" not in str(e).lower():
                 log.error("Migration failed: %s", e)
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN is_hka_member INTEGER NOT NULL DEFAULT 0")
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower():
+                log.error("Migration failed (users.is_hka_member): %s", e)
         await db.commit()
 
     # 3. CACHE_DB (Kurs-Index, Mensa, Plan-Cache)
@@ -760,14 +766,15 @@ async def upsert_user(user_id: int, username: str, first_name: str) -> None:
 async def get_all_users() -> list[dict]:
     async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute(
-            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen, pending_intent, missing_entities, primary_course "
+            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen, pending_intent, missing_entities, primary_course, is_hka_member "
             "FROM users ORDER BY last_seen DESC"
         ) as cur:
             rows = await cur.fetchall()
     return [
         {"user_id": r[0], "username": r[1], "first_name": r[2],
          "banned": bool(r[3]), "custom_rate_limit": r[4], "last_seen": r[5],
-         "pending_intent": r[6], "missing_entities": r[7], "primary_course": r[8]}
+         "pending_intent": r[6], "missing_entities": r[7], "primary_course": r[8],
+         "is_hka_member": bool(r[9])}
         for r in rows
     ]
 
@@ -775,7 +782,7 @@ async def get_all_users() -> list[dict]:
 async def get_user(user_id: int) -> dict | None:
     async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute(
-            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen, pending_intent, missing_entities, primary_course "
+            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen, pending_intent, missing_entities, primary_course, is_hka_member "
             "FROM users WHERE user_id=?", (user_id,)
         ) as cur:
             row = await cur.fetchone()
@@ -783,13 +790,14 @@ async def get_user(user_id: int) -> dict | None:
         return None
     return {"user_id": row[0], "username": row[1], "first_name": row[2],
             "banned": bool(row[3]), "custom_rate_limit": row[4], "last_seen": row[5],
-            "pending_intent": row[6], "missing_entities": row[7], "primary_course": row[8]}
+            "pending_intent": row[6], "missing_entities": row[7], "primary_course": row[8],
+            "is_hka_member": bool(row[9])}
 
 
 async def find_user_by_username(username: str) -> dict | None:
     async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute(
-            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen, pending_intent, missing_entities, primary_course "
+            "SELECT user_id, username, first_name, banned, custom_rate_limit, last_seen, pending_intent, missing_entities, primary_course, is_hka_member "
             "FROM users WHERE LOWER(username)=LOWER(?)", (username.lstrip("@"),)
         ) as cur:
             row = await cur.fetchone()
@@ -797,7 +805,8 @@ async def find_user_by_username(username: str) -> dict | None:
         return None
     return {"user_id": row[0], "username": row[1], "first_name": row[2],
             "banned": bool(row[3]), "custom_rate_limit": row[4], "last_seen": row[5],
-            "pending_intent": row[6], "missing_entities": row[7], "primary_course": row[8]}
+            "pending_intent": row[6], "missing_entities": row[7], "primary_course": row[8],
+            "is_hka_member": bool(row[9])}
 
 async def set_intent_state(user_id: int, intent: str | None, missing_entities: dict | None = None) -> None:
     val_intent = intent
@@ -819,6 +828,19 @@ async def set_banned(user_id: int, banned: bool) -> None:
 async def is_banned(user_id: int) -> bool:
     async with aiosqlite.connect(STATE_DB) as db:
         async with db.execute("SELECT banned FROM users WHERE user_id=?", (user_id,)) as cur:
+            row = await cur.fetchone()
+    return bool(row[0]) if row else False
+
+
+async def set_hka_member(user_id: int, value: bool) -> None:
+    async with aiosqlite.connect(STATE_DB) as db:
+        await db.execute("UPDATE users SET is_hka_member=? WHERE user_id=?", (int(value), user_id))
+        await db.commit()
+
+
+async def get_hka_member(user_id: int) -> bool:
+    async with aiosqlite.connect(STATE_DB) as db:
+        async with db.execute("SELECT is_hka_member FROM users WHERE user_id=?", (user_id,)) as cur:
             row = await cur.fetchone()
     return bool(row[0]) if row else False
 
