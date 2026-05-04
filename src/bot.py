@@ -646,33 +646,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await db.set_hka_member(target_uid, is_approve)
         status = "🎓 HKA-Zugang freigeschalten" if is_approve else "👤 HKA-Zugang entzogen"
         await query.answer(status)
-        # Refresh the /user detail view inline
-        u = await db.get_user(target_uid)
-        tok_in, tok_out = await db.get_tokens(target_uid)
-        recent = await db.get_recent_count(target_uid)
-        total = await db.get_total_count(target_uid)
-        name = f"@{u['username']}" if u and u["username"] else (u["first_name"] if u else str(target_uid))
-        name = escape_markdown(name, version=1)
-        custom_limit = u["custom_rate_limit"] if u else -1
-        effective_limit = custom_limit if custom_limit >= 0 else settings.rate_limit_per_hour
-        hka_status = "🎓 HKA-Mitglied" if u and u["is_hka_member"] else "👤 Extern"
-        lines = [
-            f"👤 {name} (ID: `{target_uid}`)",
-            f"Status: {'🚫 Gesperrt' if u and u['banned'] else '✅ Aktiv'} | {hka_status}",
-            f"Zuletzt gesehen: {u['last_seen'][:16] if u and u['last_seen'] else 'unbekannt'}",
-            f"Rate-Limit: {effective_limit}/h{' (custom)' if custom_limit >= 0 else ''}",
-            f"Anfragen: {recent}/h  |  {total} gesamt",
-            f"Tokens: {tok_in + tok_out:,} (↑{tok_in:,} / ↓{tok_out:,})",
-        ]
-        toggle_label = "❌ HKA-Zugang entziehen" if (u and u["is_hka_member"]) else "🎓 Als HKA-Mitglied freischalten"
-        toggle_cb = f"hka_revoke:{target_uid}" if (u and u["is_hka_member"]) else f"hka_approve:{target_uid}"
-        keyboard = [[InlineKeyboardButton(toggle_label, callback_data=toggle_cb)]]
+        text, keyboard = await admin.build_user_detail(target_uid)
         try:
-            await query.edit_message_text(
-                "\n".join(lines),
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode="Markdown"
-            )
+            await query.edit_message_text(text, reply_markup=keyboard, parse_mode="Markdown")
         except Exception:
             pass
 

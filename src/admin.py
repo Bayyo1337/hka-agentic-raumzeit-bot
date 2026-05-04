@@ -6,7 +6,7 @@ import asyncio
 import logging
 import re
 from datetime import datetime
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.helpers import escape_markdown
 from src.config import settings
@@ -18,6 +18,33 @@ log = logging.getLogger(__name__)
 
 def _is_admin(user_id: int) -> bool:
     return user_id in settings.admin_ids
+
+
+async def build_user_detail(uid: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Baut den Nutzer-Detail-Text und die Inline-Tastatur für /user und HKA-Callbacks auf."""
+    u = await db.get_user(uid)
+    tok_in, tok_out = await db.get_tokens(uid)
+    recent = await db.get_recent_count(uid)
+    total = await db.get_total_count(uid)
+    history = await db.load_history(uid)
+    name = f"@{u['username']}" if u and u["username"] else (u["first_name"] if u else str(uid))
+    name = escape_markdown(name, version=1)
+    custom_limit = u["custom_rate_limit"] if u else -1
+    effective_limit = custom_limit if custom_limit >= 0 else settings.rate_limit_per_hour
+    hka_status = "🎓 HKA-Mitglied" if u and u["is_hka_member"] else "👤 Extern"
+    lines = [
+        f"👤 {name} (ID: `{uid}`)",
+        f"Status: {'🚫 Gesperrt' if u and u['banned'] else '✅ Aktiv'} | {hka_status}",
+        f"Zuletzt gesehen: {u['last_seen'][:16] if u and u['last_seen'] else 'unbekannt'}",
+        f"Rate-Limit: {effective_limit}/h{' (custom)' if custom_limit >= 0 else ''}",
+        f"Anfragen: {recent}/h  |  {total} gesamt",
+        f"Tokens: {tok_in + tok_out:,} (↑{tok_in:,} / ↓{tok_out:,})",
+        f"History-Einträge: {len(history) // 2}",
+    ]
+    toggle_label = "❌ HKA-Zugang entziehen" if (u and u["is_hka_member"]) else "🎓 Als HKA-Mitglied freischalten"
+    toggle_cb = f"hka_revoke:{uid}" if (u and u["is_hka_member"]) else f"hka_approve:{uid}"
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(toggle_label, callback_data=toggle_cb)]])
+    return "\n".join(lines), keyboard
 
 
 def _require_admin(func):
@@ -227,34 +254,8 @@ async def cmd_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if uid is None:
         await update.message.reply_text("❌ Nutzer nicht gefunden.")
         return
-    u = await db.get_user(uid)
-    tok_in, tok_out = await db.get_tokens(uid)
-    recent = await db.get_recent_count(uid)
-    total = await db.get_total_count(uid)
-    history = await db.load_history(uid)
-    name = f"@{u['username']}" if u and u["username"] else (u["first_name"] if u else str(uid))
-    name = escape_markdown(name, version=1)
-    custom_limit = u["custom_rate_limit"] if u else -1
-    effective_limit = custom_limit if custom_limit >= 0 else settings.rate_limit_per_hour
-    hka_status = "🎓 HKA-Mitglied" if u and u["is_hka_member"] else "👤 Extern"
-    lines = [
-        f"👤 {name} (ID: `{uid}`)",
-        f"Status: {'🚫 Gesperrt' if u and u['banned'] else '✅ Aktiv'} | {hka_status}",
-        f"Zuletzt gesehen: {u['last_seen'][:16] if u and u['last_seen'] else 'unbekannt'}",
-        f"Rate-Limit: {effective_limit}/h{' (custom)' if custom_limit >= 0 else ''}",
-        f"Anfragen: {recent}/h  |  {total} gesamt",
-        f"Tokens: {tok_in + tok_out:,} (↑{tok_in:,} / ↓{tok_out:,})",
-        f"History-Einträge: {len(history) // 2}",
-    ]
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    toggle_label = "❌ HKA-Zugang entziehen" if (u and u["is_hka_member"]) else "🎓 Als HKA-Mitglied freischalten"
-    toggle_cb = f"hka_revoke:{uid}" if (u and u["is_hka_member"]) else f"hka_approve:{uid}"
-    keyboard = [[InlineKeyboardButton(toggle_label, callback_data=toggle_cb)]]
-    await update.message.reply_text(
-        "\n".join(lines),
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
+    text, keyboard = await build_user_detail(uid)
+    await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
 
 
 @_require_admin
