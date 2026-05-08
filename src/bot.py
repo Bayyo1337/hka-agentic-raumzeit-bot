@@ -134,21 +134,35 @@ def build_optin_text() -> str:
         "anpassen oder via `/delete` alles löschen."
     )
 
-def build_start_text() -> str:
+def build_start_text(has_consented: bool = False) -> str:
     """Erzeugt den Willkommenstext für /start."""
-    return (
+    consent_status = "✅ *Datenschutz zugestimmt*" if has_consented else "⚠️ *Zustimmung fehlt*"
+    
+    text = (
         "🏫 *Willkommen beim Raumzeit KI-Bot!*\n\n"
+        f"Status: {consent_status}\n\n"
         "Ich helfe dir bei Fragen rund um den Campus, Stundenpläne und die Mensa.\n\n"
         "💡 *Frag mich einfach:*\n"
         "• _\"Wann ist M-102 heute frei?\"_\n"
         "• _\"Stundenplan MABB.2 am Dienstag\"_\n"
         "• _\"Gibt es heute Pizza in der Mensa?\"_\n\n"
+    )
+    
+    if not has_consented:
+        text += (
+            "🔒 *Aktion erforderlich:*\n"
+            "Bitte stimme den Datenschutzbestimmungen zu, damit ich deine Anfragen verarbeiten kann. "
+            "Nutze dazu den Befehl `/consent` oder schreib mir einfach eine Nachricht.\n\n"
+        )
+    
+    text += (
         "🚀 *Erste Schritte:*\n"
         "1️⃣ Nutze `/setcourse`, um dein Semester zu hinterlegen.\n"
         "2️⃣ Frag mich: _\"Was habe ich heute?\"_\n\n"
         "Nutze `/help` für die vollständige Befehlsreferenz.\n"
         "📄 [Quellcode (AGPL-3.0)](https://github.com/Bayyo1337/hka-agentic-raumzeit-bot)"
     )
+    return text
 
 def build_help_text(is_admin: bool) -> str:
     """Erzeugt die vollständige Hilfe-Referenz."""
@@ -240,7 +254,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(build_help_text(is_admin), parse_mode="Markdown", disable_web_page_preview=True)
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(build_start_text(), parse_mode="Markdown", disable_web_page_preview=True)
+    user_id = update.effective_user.id
+    has_consented = await db.get_consent_status(user_id)
+    await update.message.reply_text(build_start_text(bool(has_consented)), parse_mode="Markdown", disable_web_page_preview=True)
 
 
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -749,6 +765,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             [InlineKeyboardButton("📄 Details lesen", callback_data="privacy_opt_in_details")]
         ]
         await update.message.reply_text(
+            "⏳ *Deine Nachricht wurde gespeichert.*\n\n"
+            "Damit ich sie verarbeiten kann, musst du erst den Datenschutzbestimmungen zustimmen.\n\n" + 
             build_optin_text(),
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
@@ -1086,10 +1104,19 @@ async def gdpr_cleanup_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def _post_init(app) -> None:
     await db.init()
-    await app.bot.set_my_commands(_USER_COMMANDS)
+    try:
+        await app.bot.set_my_commands(_USER_COMMANDS)
+        log.info("Telegram-Menü für Nutzer registriert (%d Befehle).", len(_USER_COMMANDS))
+    except Exception as e:
+        log.error("Fehler bei Registrierung der Nutzer-Befehle: %s", e)
+
     for aid in settings.admin_ids:
-        try: await app.bot.set_my_commands(_ADMIN_COMMANDS, scope={"type": "chat", "chat_id": aid})
-        except: pass
+        try:
+            await app.bot.set_my_commands(_ADMIN_COMMANDS, scope={"type": "chat", "chat_id": aid})
+            log.info("Telegram-Menü für Admin %s registriert.", aid)
+        except Exception as e:
+            log.warning("Konnte Admin-Menü für %s nicht registrieren: %s", aid, e)
+
     if await db.course_index_stale(): asyncio.create_task(_run_index_build())
     if raumzeit.lecturers_stale(): asyncio.create_task(_run_lecturer_build())
     else: raumzeit.load_lecturers()

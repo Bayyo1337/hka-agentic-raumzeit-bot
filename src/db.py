@@ -80,57 +80,29 @@ async def init() -> None:
                 updated_at            TEXT NOT NULL DEFAULT ''
             );
         """)
-        # Migration: Falls Spalten in state.db noch fehlen
-        try:
-            await db.execute("ALTER TABLE user_privacy_settings ADD COLUMN allow_error_reports INTEGER NOT NULL DEFAULT 0")
-        except Exception as e:
-            if "duplicate column name" not in str(e).lower():
-                log.error("Migration failed (user_privacy_settings.allow_error_reports): %s", e)
-        try:
-            await db.execute("ALTER TABLE histories ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
-        except Exception as e:
-            if "duplicate column name" not in str(e).lower():
-                log.error("Migration failed (histories.updated_at): %s", e)
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0")
-        except Exception as e:
-            if "duplicate column name" not in str(e).lower():
-                log.error("Migration failed: %s", e)
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN custom_rate_limit INTEGER NOT NULL DEFAULT -1")
-        except Exception as e:
-            if "duplicate column name" not in str(e).lower():
-                log.error("Migration failed: %s", e)
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN primary_course TEXT")
-        except Exception as e:
-            if "duplicate column name" not in str(e).lower():
-                log.error("Migration failed: %s", e)
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN pending_intent TEXT")
-        except Exception as e:
-            if "duplicate column name" not in str(e).lower():
-                log.error("Migration failed: %s", e)
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN missing_entities TEXT")
-        except Exception as e:
-            if "duplicate column name" not in str(e).lower():
-                log.error("Migration failed: %s", e)
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN has_consented INTEGER NOT NULL DEFAULT 0")
-        except Exception as e:
-            if "duplicate column name" not in str(e).lower():
-                log.error("Migration failed: %s", e)
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN pending_message TEXT NOT NULL DEFAULT ''")
-        except Exception as e:
-            if "duplicate column name" not in str(e).lower():
-                log.error("Migration failed: %s", e)
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN is_hka_member INTEGER NOT NULL DEFAULT 0")
-        except Exception as e:
-            if "duplicate column name" not in str(e).lower():
-                log.error("Migration failed (users.is_hka_member): %s", e)
+
+        async def _ensure_column(table: str, column: str, definition: str):
+            async with db.execute(f"PRAGMA table_info({table})") as cur:
+                columns = {row[1] for row in await cur.fetchall()}
+            if column not in columns:
+                try:
+                    await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                    log.info("Migration: Spalte %s.%s hinzugefügt.", table, column)
+                except Exception as e:
+                    log.error("Migration fehlgeschlagen (%s.%s): %s", table, column, e)
+
+        # Migrationen durchführen
+        await _ensure_column("user_privacy_settings", "allow_error_reports", "INTEGER NOT NULL DEFAULT 0")
+        await _ensure_column("histories", "updated_at", "TEXT NOT NULL DEFAULT ''")
+        await _ensure_column("users", "banned", "INTEGER NOT NULL DEFAULT 0")
+        await _ensure_column("users", "custom_rate_limit", "INTEGER NOT NULL DEFAULT -1")
+        await _ensure_column("users", "primary_course", "TEXT")
+        await _ensure_column("users", "pending_intent", "TEXT")
+        await _ensure_column("users", "missing_entities", "TEXT")
+        await _ensure_column("users", "has_consented", "INTEGER NOT NULL DEFAULT 0")
+        await _ensure_column("users", "pending_message", "TEXT NOT NULL DEFAULT ''")
+        await _ensure_column("users", "is_hka_member", "INTEGER NOT NULL DEFAULT 0")
+        
         await db.commit()
 
     # 3. CACHE_DB (Kurs-Index, Mensa, Plan-Cache)
