@@ -877,7 +877,12 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
                 from src.router import router_instance
                 router_result = await router_instance.classify_message(
                     text, 
-                    {"user_id": user_id, "chat_id": chat_id, "primary_course": primary_course}, 
+                    {
+                        "user_id": user_id,
+                        "chat_id": chat_id,
+                        "primary_course": primary_course,
+                        "user_label": user_label,
+                    },
                     u or {}
                 )
                 log.info("Router Result: Intent=%s, Confidence=%.2f, Strategy=%s",
@@ -1222,4 +1227,3 @@ def main():
     except (KeyboardInterrupt, SystemExit): pass
 
 if __name__ == "__main__": main()
-
