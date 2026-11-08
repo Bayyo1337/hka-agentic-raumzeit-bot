@@ -59,6 +59,15 @@ Dieses Projekt wird von einem Team spezialisierter KI-Agenten (Skills) entwickel
 *   **`feature-implementer`**: Setzt Spezifikationen in sauberen, lauffähigen Code um.
 *   **`qa-reviewer`**: Unabhängige Qualitätskontrolle, führt Tests durch und verwaltet die Git-Historie.
 
+### Gemeinsame Agentenstruktur
+
+Für KI-Agenten unabhängig vom verwendeten Anbieter ist `AGENTS.md` im
+Repository-Root der Einstiegspunkt. Rollenbeschreibungen, Übergaben und
+Arbeitsvorlagen liegen unter [`.agents/`](.agents/). Die vorhandenen Gemini
+CLI-Skills in [`.gemini/`](.gemini/) bleiben für Gemini-spezifische Workflows
+verfügbar. Der geplante Greenfield-Neubau ist in
+[`docs/REBUILD_PLAN.md`](docs/REBUILD_PLAN.md) beschrieben.
+
 ---
 
 ## 🚀 Lokale Installation & Setup
