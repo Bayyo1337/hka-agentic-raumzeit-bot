@@ -1,0 +1,2 @@
+"""HKA people adapter."""
+

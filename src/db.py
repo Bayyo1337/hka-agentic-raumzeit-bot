@@ -62,6 +62,11 @@ async def init() -> None:
                 chat_id  INTEGER PRIMARY KEY,
                 messages TEXT NOT NULL DEFAULT '[]'
             );
+            CREATE TABLE IF NOT EXISTS conversation_states (
+                chat_id    INTEGER PRIMARY KEY,
+                state_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
         """)
         # Migration: Falls Spalten in state.db noch fehlen
         try:
@@ -388,12 +393,44 @@ async def find_user_by_username(username: str) -> dict | None:
 async def set_intent_state(user_id: int, intent: str | None, missing_entities: dict | None = None) -> None:
     val_intent = intent
     val_entities = json.dumps(missing_entities) if missing_entities is not None else None
+    state = json.dumps({
+        "chat_id": user_id,
+        "intent": intent,
+        "entities": missing_entities or {},
+        "attempts": 0,
+    })
     async with aiosqlite.connect(STATE_DB) as db:
         await db.execute(
             "UPDATE users SET pending_intent=?, missing_entities=? WHERE user_id=?", 
             (val_intent, val_entities, user_id)
         )
+        if intent is None:
+            await db.execute("DELETE FROM conversation_states WHERE chat_id=?", (user_id,))
+        else:
+            await db.execute(
+                """
+                INSERT INTO conversation_states(chat_id, state_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    state_json=excluded.state_json,
+                    updated_at=excluded.updated_at
+                """,
+                (user_id, state, datetime.now().isoformat()),
+            )
         await db.commit()
+
+
+async def get_intent_state(user_id: int) -> dict | None:
+    async with aiosqlite.connect(STATE_DB) as db:
+        async with db.execute(
+            "SELECT state_json FROM conversation_states WHERE chat_id=?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+    return json.loads(row[0]) if row else None
+
+
+async def clear_intent_state(user_id: int) -> None:
+    await set_intent_state(user_id, None)
 
 
 async def set_banned(user_id: int, banned: bool) -> None:
@@ -580,7 +617,8 @@ async def get_all_test_cases() -> list[str]:
 
 def list_feedback_logs() -> list[str]:
     path = "data/feedback"
-    if not os.path.isdir(path): return []
+    if not os.path.isdir(path):
+        return []
     return sorted(f for f in os.listdir(path) if f.endswith(".json"))
 
 

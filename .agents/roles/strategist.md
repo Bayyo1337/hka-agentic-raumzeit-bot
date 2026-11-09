@@ -11,6 +11,8 @@ execute without rediscovering the repository.
 - Separate required work from unrelated cleanup.
 - State assumptions and acceptance criteria.
 - Choose the smallest validation scope that proves the change.
+- Select the role's model from `.agents/models.toml` and record the effective
+  model in the handoff.
 - Create a handoff using `.agents/templates/handoff.md` when work is delegated.
 
 ## Guardrails
@@ -19,3 +21,6 @@ execute without rediscovering the repository.
 - Do not invent API behavior; confirm it from code, fixtures, or documentation.
 - Flag ambiguity that changes user-visible behavior instead of silently choosing
   a risky interpretation.
+- Split work so independent agents never edit the same files concurrently.
+- Escalate model capability only when routing policy or a failed gate requires
+  it; do not use the strongest model for every task by default.

@@ -11,6 +11,7 @@ current implementation.
 - Inspect nearby tests and existing helpers before proposing new logic.
 - Reproduce bugs with a focused test or script when possible.
 - Record concrete file paths, symbols, and observed behavior.
+- Record the effective provider/model and whether a fallback model was used.
 
 ## Deliverable
 
@@ -23,3 +24,5 @@ Provide a concise report containing:
 5. risks and edge cases.
 
 Do not modify unrelated files or expose credentials while collecting evidence.
+Do not edit production code during research; return a handoff when the
+implementation scope is clear.
