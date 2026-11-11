@@ -16,12 +16,16 @@ import asyncio
 import json
 import logging
 import os
-from datetime import date
+import re
+from datetime import date, timedelta
 from typing import Optional
 import litellm
 from src.config import settings
 from src.tools import TOOL_HANDLERS
 from src import formatter
+from src.app.requests.legacy_repository import LegacyToolTimetableRepository
+from src.app.requests.pipeline import DeterministicPipeline
+from src.use_cases.timetable import TimetableUseCase
 
 log = logging.getLogger(__name__)
 litellm.drop_params = True
@@ -125,9 +129,9 @@ Regeln zur Zeitrechnung:
 
     # 3. Fehler-Handling (Nur wenn Profil relevant ist)
     if intent in ["course_timetable", "smalltalk_fallback"]:
-        sections.append(f"""
+        sections.append("""
 Fehler-Handling:
-- Wenn der Nutzer nach SEINEM persönlichen Plan fragt ("mein Plan", "was habe ich heute"), aber im 'Nutzer-Profil' unten steht 'Kein Kurs hinterlegt', darfst du keinen Kurs raten! Gib in diesem Fall exakt {{"error": "no_course"}} zurück.
+- Wenn der Nutzer nach SEINEM persönlichen Plan fragt ("mein Plan", "was habe ich heute"), aber im 'Nutzer-Profil' unten steht 'Kein Kurs hinterlegt', darfst du keinen Kurs raten! Gib in diesem Fall exakt {"error": "no_course"} zurück.
 - WICHTIG: Wenn der Nutzer explizite Kurs-Keys (z.B. MABB, INFB) nennt, ist dies KEINE persönliche Anfrage. Führe das Tool ganz normal aus!""")
 
     # 4. Format & Kontext
@@ -150,18 +154,24 @@ def _resolve_model() -> str:
 
 def _set_api_key(provider: str | None = None) -> None:
     p = provider or settings.llm_provider
-    if p == "claude": os.environ["ANTHROPIC_API_KEY"] = settings.anthropic_api_key
-    elif p == "gemini": os.environ["GEMINI_API_KEY"] = settings.gemini_api_key
-    elif p == "groq": os.environ["GROQ_API_KEY"] = settings.groq_api_key
-    elif p == "mistral": os.environ["MISTRAL_API_KEY"] = settings.mistral_api_key
-    elif p == "openrouter": os.environ["OPENROUTER_API_KEY"] = settings.openrouter_api_key
+    if p == "claude":
+        os.environ["ANTHROPIC_API_KEY"] = settings.anthropic_api_key
+    elif p == "gemini":
+        os.environ["GEMINI_API_KEY"] = settings.gemini_api_key
+    elif p == "groq":
+        os.environ["GROQ_API_KEY"] = settings.groq_api_key
+    elif p == "mistral":
+        os.environ["MISTRAL_API_KEY"] = settings.mistral_api_key
+    elif p == "openrouter":
+        os.environ["OPENROUTER_API_KEY"] = settings.openrouter_api_key
 
 _set_api_key()
 _provider_override: str | None = None
 
 def set_provider(provider: str) -> bool:
     global _provider_override
-    if provider not in _DEFAULTS: return False
+    if provider not in _DEFAULTS:
+        return False
     _provider_override = provider
     _set_api_key(provider)
     return True
@@ -172,11 +182,89 @@ def current_provider() -> str:
 MAX_HISTORY_EXCHANGES = 3
 MAX_TOOL_CALLS = 6
 
+
+_ROOM_QUERY_RE = re.compile(r"\b[A-Za-z]{1,3}-\d{2,4}\b")
+_COURSE_QUERY_RE = re.compile(r"\b[A-Za-z]{2,8}\.\d{1,2}(?:\.[A-Za-z0-9]+)?\b")
+_COURSE_WORDS_RE = re.compile(
+    r"\b([A-Za-z]{2,8})[\s_-]+(\d{1,2})(?:[._-]+([A-Za-z0-9]+))?\b"
+)
+_ISO_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+_DE_DATE_RE = re.compile(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b")
+
+
+def _deterministic_query(text: str) -> tuple[str, dict] | None:
+    """Resolve unambiguous room/course queries without asking the LLM."""
+    room = _ROOM_QUERY_RE.search(text)
+    if room:
+        return "get_room_timetable", {
+            "room_name": room.group(0).upper(),
+            "date": _resolve_query_date(text),
+        }
+    course = _COURSE_QUERY_RE.search(text)
+    if course:
+        return "get_course_timetable", {
+            "course_key": course.group(0).upper(),
+            "date": _resolve_query_date(text),
+        }
+    course_words = _COURSE_WORDS_RE.search(text)
+    if course_words:
+        abbreviation, semester, group = course_words.groups()
+        course_key = f"{abbreviation.upper()}.{semester}"
+        if group:
+            course_key += f".{group.upper()}"
+        return "get_course_timetable", {
+            "course_key": course_key,
+            "date": _resolve_query_date(text),
+        }
+    return None
+
+
+def _resolve_query_date(text: str) -> str | None:
+    iso_date = _ISO_DATE_RE.search(text)
+    if iso_date:
+        return iso_date.group(0)
+    de_date = _DE_DATE_RE.search(text)
+    if de_date:
+        day, month, year = de_date.groups()
+        return f"{year}-{int(month):02d}-{int(day):02d}"
+    today = date.today()
+    lowered = text.casefold()
+    if "morgen" in lowered:
+        today += timedelta(days=1)
+    elif "gestern" in lowered:
+        today -= timedelta(days=1)
+    elif "heute" not in lowered:
+        return None
+    return today.isoformat()
+
+
 async def run(user_message: str, history: list[dict], user_label: str = "", primary_course: str | None = None, intent: str = "smalltalk_fallback") -> tuple[str, int, int, list]:
+    deterministic = _deterministic_query(user_message)
+    if deterministic:
+        repository = LegacyToolTimetableRepository(TOOL_HANDLERS)
+        pipeline = DeterministicPipeline(TimetableUseCase(repository))
+        response = None
+        try:
+            response = await pipeline.handle(user_message)
+            tool_name = deterministic[0]
+            result = repository.last_payload or {"text": response.text}
+            result["_pipeline_trace"] = response.trace.model_dump()
+        except Exception as exc:
+            tool_name = deterministic[0]
+            result = {"error": f"Interner Fehler im Tool {tool_name}: {exc}"}
+        reply = response.text if response is not None else formatter.format_results([(tool_name, result)], user_message)
+        history.append({"role": "user", "content": user_message})
+        history.append({"role": "assistant", "content": reply})
+        max_entries = MAX_HISTORY_EXCHANGES * 2
+        if len(history) > max_entries:
+            del history[:-max_entries]
+        return reply, 0, 0, [(tool_name, result)]
+
     processed_history = []
     for msg in history:
         content = msg.get("content", "")
-        if len(content) > 1000: content = content[:1000] + "... [gekürzt]"
+        if len(content) > 1000:
+            content = content[:1000] + "... [gekürzt]"
         processed_history.append({"role": msg["role"], "content": content})
 
     model = _resolve_model()
@@ -201,7 +289,8 @@ async def run(user_message: str, history: list[dict], user_label: str = "", prim
             )
             break
         except litellm.RateLimitError:
-            if attempt == 2: raise
+            if attempt == 2:
+                raise
             wait = 10 * (attempt + 1)
             await asyncio.sleep(wait)
 
@@ -237,7 +326,8 @@ async def run(user_message: str, history: list[dict], user_label: str = "", prim
         name = call.get("tool", "")
         args = call.get("args", {})
         handler = TOOL_HANDLERS.get(name)
-        if not handler: return name, {"error": f"Unbekanntes Tool: {name}"}
+        if not handler:
+            return name, {"error": f"Unbekanntes Tool: {name}"}
         try:
             res = await handler(args)
             return name, res

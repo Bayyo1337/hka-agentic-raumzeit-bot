@@ -1,5 +1,7 @@
 import pytest
-from src.router import router_instance, RouterOutput
+from unittest.mock import patch
+
+from src.router import router_instance
 
 @pytest.mark.asyncio
 async def test_fast_path_room():
@@ -8,6 +10,7 @@ async def test_fast_path_room():
     assert res.intent == "room_timetable"
     assert res.confidence == 1.0
     assert res.strategy.action == "direct_tool"
+    assert res.entities["room"] == "M-102"
 
 @pytest.mark.asyncio
 async def test_fast_path_mensa():
@@ -32,9 +35,6 @@ async def test_fast_path_calendar():
     assert res.intent == "university_calendar"
     assert res.confidence == 1.0
     assert res.strategy.action == "direct_tool"
-
-# Wir mocken litellm für den llm_fallback test
-from unittest.mock import patch
 
 @pytest.mark.asyncio
 @patch('src.router.litellm.acompletion')

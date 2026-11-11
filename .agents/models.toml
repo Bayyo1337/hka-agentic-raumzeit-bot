@@ -1,0 +1,41 @@
+# Model routing for the repository-owned agent workflow.
+#
+# This file contains model names only. API keys, base URLs, and credentials
+# belong in the executing CLI/runner environment, never in the repository.
+
+[defaults]
+provider = "openai"
+fallback_model = "gpt-4.1-mini"
+max_retries = 2
+
+[roles.strategist]
+model = "gpt-4.1"
+temperature = 0.1
+purpose = "Scope work, define acceptance criteria, and split bounded tasks."
+
+[roles.researcher]
+model = "gpt-4.1-mini"
+temperature = 0.0
+purpose = "Collect code evidence, reproduce behavior, and identify affected files."
+
+[roles.implementer]
+model = "gpt-4.1"
+temperature = 0.1
+purpose = "Implement one approved work package and its focused tests."
+
+[roles.reviewer]
+model = "o3"
+temperature = 0.0
+purpose = "Independently review correctness, regressions, security, and validation."
+
+[roles.integrator]
+model = "gpt-4.1"
+temperature = 0.0
+purpose = "Resolve review findings, run final checks, and produce the release handoff."
+
+[routing]
+# Escalate only when the cheaper model cannot complete the bounded task.
+researcher_to_strategist_on = ["ambiguous_scope", "missing_acceptance_criteria"]
+implementer_to_integrator_on = ["test_failure", "conflicting_changes", "blocked_dependency"]
+reviewer_to_integrator_on = ["high_severity_finding", "missing_validation", "unrelated_diff"]
+

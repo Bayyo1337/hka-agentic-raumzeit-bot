@@ -1,5 +1,6 @@
 import logging
 import re
+from datetime import date, timedelta
 from typing import Literal, Dict, Any, Optional
 from pydantic import BaseModel, Field
 import litellm
@@ -49,10 +50,17 @@ class Router:
         """Stufe 1: Deterministische Klassifikation mittels RegEx/Keywords."""
         for pattern, intent, action in self.heuristics:
             if re.search(pattern, text):
+                entities = {}
+                room = re.search(r"(?i)\b[a-z]{1,3}-\d{3}\b", text)
+                if room:
+                    entities["room"] = room.group(0).upper()
+                query_date = _resolve_date(text)
+                if query_date:
+                    entities["date"] = query_date
                 return RouterOutput(
                     intent=intent, # type: ignore
                     confidence=1.0,
-                    entities={},
+                    entities=entities,
                     strategy=RouteStrategy(
                         action=action, # type: ignore
                         reason=f"Regex Match: {pattern}"
@@ -96,11 +104,16 @@ Nachricht: "{text}"
         
         # API Keys setzen
         import os
-        if "claude" in model: os.environ["ANTHROPIC_API_KEY"] = settings.anthropic_api_key
-        elif "gemini" in model: os.environ["GEMINI_API_KEY"] = settings.gemini_api_key
-        elif "groq" in model: os.environ["GROQ_API_KEY"] = settings.groq_api_key
-        elif "mistral" in model: os.environ["MISTRAL_API_KEY"] = settings.mistral_api_key
-        elif "openrouter" in model: os.environ["OPENROUTER_API_KEY"] = settings.openrouter_api_key
+        if "claude" in model:
+            os.environ["ANTHROPIC_API_KEY"] = settings.anthropic_api_key
+        elif "gemini" in model:
+            os.environ["GEMINI_API_KEY"] = settings.gemini_api_key
+        elif "groq" in model:
+            os.environ["GROQ_API_KEY"] = settings.groq_api_key
+        elif "mistral" in model:
+            os.environ["MISTRAL_API_KEY"] = settings.mistral_api_key
+        elif "openrouter" in model:
+            os.environ["OPENROUTER_API_KEY"] = settings.openrouter_api_key
 
         try:
             response = await litellm.acompletion(
@@ -144,3 +157,18 @@ Nachricht: "{text}"
         return await self._llm_fallback(text)
 
 router_instance = Router()
+
+
+def _resolve_date(text: str) -> str | None:
+    lowered = text.casefold()
+    if "morgen" in lowered:
+        return (date.today() + timedelta(days=1)).isoformat()
+    if "gestern" in lowered:
+        return (date.today() - timedelta(days=1)).isoformat()
+    if "heute" in lowered:
+        return date.today().isoformat()
+    match = re.search(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b", text)
+    if match:
+        day, month, year = match.groups()
+        return f"{year}-{int(month):02d}-{int(day):02d}"
+    return None
